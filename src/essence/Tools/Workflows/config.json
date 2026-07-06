@@ -18,6 +18,18 @@
             {
                 "components": [
                     {
+                        "field": "variables.baseUrl",
+                        "name": "API Base URL",
+                        "description": "Origin of the CZDT workflows API (e.g. https://www.czdt.smce.nasa.gov). Required for the tool to function.",
+                        "type": "text",
+                        "width": 12,
+                        "placeholder": "https://www.czdt.smce.nasa.gov"
+                    }
+                ]
+            },
+            {
+                "components": [
+                    {
                         "field": "variables.pollIntervalMs",
                         "name": "Poll Interval (ms)",
                         "description": "How often the tool polls workflow job status.",

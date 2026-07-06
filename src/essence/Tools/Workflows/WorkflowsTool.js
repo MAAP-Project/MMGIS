@@ -720,8 +720,11 @@ const Workflows = {
         Workflows.vars = L_.getToolVars('workflows') || {}
         if (Workflows.vars.pollIntervalMs)
             Workflows.pollIntervalMs = Workflows.vars.pollIntervalMs
-        const wf = (L_.configData && L_.configData.workflows) || {}
-        Workflows.baseUrl = wf.baseUrl || ''
+        // baseUrl is a tool variable (configurable in the Configure UI).
+        // Fall back to the legacy top-level `workflows` config block for
+        // missions configured before this moved.
+        const legacy = (L_.configData && L_.configData.workflows) || {}
+        Workflows.baseUrl = Workflows.vars.baseUrl || legacy.baseUrl || ''
         if (!Workflows.expandedIds) Workflows.expandedIds = new Set()
         if (!Workflows.paramsExpandedIds)
             Workflows.paramsExpandedIds = new Set()
