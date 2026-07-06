@@ -539,7 +539,9 @@ function parseStacItemUrl(u) {
     return { collection: m[1], item: m[2] }
 }
 
-const GROUP_UUID = 'workflows-tool-group'
+// Fixed RFC-format uuid — the Configure API's validator (uuidValidate)
+// rejects human-readable ids and would regenerate them, breaking lookups.
+const GROUP_UUID = 'c7a4f1de-2f04-4e6b-9c8d-3b1a2e5f6a70'
 const GROUP_DISPLAY_NAME = 'Workflow Outputs'
 
 // Get (or lazily create + register) the header group all workflow layers
@@ -548,6 +550,8 @@ const GROUP_DISPLAY_NAME = 'Workflow Outputs'
 function ensureWorkflowsGroup() {
     if (L_.layers.data[GROUP_UUID]) return L_.layers.data[GROUP_UUID]
     const header = {
+        // Post-parse convention: name IS the uuid (LayersTool builds DOM ids
+        // from name; display_name carries the label).
         name: GROUP_UUID,
         uuid: GROUP_UUID,
         display_name: GROUP_DISPLAY_NAME,
@@ -596,7 +600,7 @@ function buildLayerDescription(jobId, job) {
 }
 
 function buildLayerObjForJob(jobId, uri, job) {
-    const uuid = `workflow-${jobId}`
+    const uuid = jobId
     const base = {
         // MMGIS keys everything by uuid-as-name; display_name is the label.
         name: uuid,
@@ -692,7 +696,7 @@ async function persistLayerToMission(layerObj) {
 // user renames the run — in-memory, in the Layers panel, and in the stored
 // mission config when the layer was persisted there.
 function syncLayerName(jobId) {
-    const uuid = `workflow-${jobId}`
+    const uuid = jobId
     const layerObj = L_.layers.data[uuid]
     if (!layerObj) return
     const job = Workflows.jobs[jobId] || {}
@@ -740,7 +744,7 @@ function syncLayerName(jobId) {
 function addLayerForJob(jobId, job) {
     const uri = job.autoAddableUri
     if (!uri) return
-    const uuid = `workflow-${jobId}`
+    const uuid = jobId
     const layerObj = buildLayerObjForJob(jobId, uri, job)
     // Skip mmgisAPI.addLayer (it forgets to re-parse the config) and skip the
     // resetConfig path (re-runs parseConfig over every existing mission layer,
@@ -1179,13 +1183,13 @@ const Workflows = {
             // exists — no need to open the drawer just to toggle. The
             // wf-layer-toggle handler stops propagation, so clicking it
             // doesn't expand/collapse the row.
-            const layerExists = L_.layers.data[`workflow-${id}`] != null
+            const layerExists = L_.layers.data[id] != null
             const tileVisibility = layerExists
                 ? `<div class="wf-tile-visibility wf-layer-toggle" data-job-id="${escapeHTML(
                       id
                   )}" title="Toggle layer visibility">` +
                   `<div class="wf-checkbox${
-                      L_.layers.on[`workflow-${id}`] === true ? ' on' : ''
+                      L_.layers.on[id] === true ? ' on' : ''
                   }"></div>` +
                   `</div>`
                 : ''
@@ -1377,7 +1381,7 @@ function buildExpandedSection(job, jobId) {
     // noise to end users) — just the layer controls for the loadable output.
     {
         const statusClass = normalizeStatus(job.status)
-        const visible = L_.layers.on[`workflow-${jobId}`] === true
+        const visible = L_.layers.on[jobId] === true
 
         if (statusClass === 'completed' && job.autoAddableUri) {
             // A layer counts as added if we added it this session OR it was
@@ -1385,7 +1389,7 @@ function buildExpandedSection(job, jobId) {
             // normal config parse on load.
             const added =
                 job.layerAdded ||
-                L_.layers.data[`workflow-${jobId}`] != null
+                L_.layers.data[jobId] != null
             // Two explicit controls: "Add layer" (one-time) and a visibility
             // toggle that's only live once the layer exists on the map.
             const $row = $('<div class="wf-map-btn-row"></div>')
@@ -1621,7 +1625,7 @@ function interfaceWithMMGIS() {
         e.stopPropagation()
         const id = $(this).attr('data-job-id')
         if (!id) return
-        const layerObj = L_.layers.data[`workflow-${id}`]
+        const layerObj = L_.layers.data[id]
         if (!layerObj) return
         Promise.resolve(L_.toggleLayer(layerObj)).then(() =>
             Workflows.renderJobs()
