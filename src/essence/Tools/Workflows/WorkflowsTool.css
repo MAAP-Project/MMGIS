@@ -426,10 +426,14 @@
     min-width: 0;
 }
 
-#workflowsTool .wf-map-btn {
-    display: block;
-    width: 100%;
+#workflowsTool .wf-map-btn-row {
+    display: flex;
+    gap: 6px;
     margin-top: 6px;
+}
+
+#workflowsTool .wf-map-btn {
+    flex: 1;
     background: var(--color-a);
     color: var(--color-l);
     border: none;
@@ -440,8 +444,13 @@
     letter-spacing: 0.04em;
 }
 
-#workflowsTool .wf-map-btn:hover {
+#workflowsTool .wf-map-btn:hover:not(:disabled) {
     filter: brightness(1.15);
+}
+
+#workflowsTool .wf-map-btn:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
 }
 
 #workflowsTool .wf-map-btn.wf-layer-toggle {
