@@ -453,10 +453,46 @@
     cursor: not-allowed;
 }
 
-#workflowsTool .wf-map-btn.wf-layer-toggle {
-    background: transparent;
-    color: #66bb6a;
-    border: 1px solid #3a5c3c;
+/* Visibility control — mirrors the Layers panel's filled checkbox look
+   (#layersTool .checkbox/.checkbox.on are panel-scoped, so restated here). */
+#workflowsTool .wf-layer-visibility {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 0 8px 0 2px;
+    cursor: pointer;
+    user-select: none;
+    border: 1px solid #444;
+    color: #cfcfcf;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+#workflowsTool .wf-layer-visibility.disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
+#workflowsTool .wf-checkbox {
+    margin: 5px;
+    width: 20px;
+    height: 20px;
+    border: 1px solid var(--color-a3);
+    border-radius: 2px;
+    transition: background 0.2s cubic-bezier(0.39, 0.575, 0.565, 1),
+        border 0.1s cubic-bezier(0.39, 0.575, 0.565, 1);
+}
+
+#workflowsTool .wf-checkbox.on {
+    background: var(--color-a7);
+    border: 0px solid #777;
+}
+
+#workflowsTool
+    .wf-layer-visibility:not(.disabled):hover
+    .wf-checkbox:not(.on) {
+    background: rgba(255, 255, 255, 0.08);
 }
 
 #workflowsTool .wf-endpoint-desc {

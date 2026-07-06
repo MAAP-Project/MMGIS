@@ -76,7 +76,10 @@ function recordSubmittedJob(jobId, endpoint, payload, name) {
 }
 
 function updateJobName(jobId, name) {
-    return mmgisFetch('api/workflows-history/rename', {
+    // Goes through the upsert route (not /rename) so naming a job this user
+    // never submitted creates its history row instead of silently updating
+    // zero rows.
+    return mmgisFetch('api/workflows-history', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ workflow_id: jobId, name: name || '' }),
@@ -639,6 +642,52 @@ function buildLayerObjForJob(jobId, uri, job) {
     }
 }
 
+// Persist the layer into the mission's stored configuration via the
+// Configure API so it survives reloads and reaches other users of the
+// mission. Two-step, self-healing: first try placing the child inside the
+// existing "Workflow Outputs" group; if the group doesn't exist in the
+// stored config yet, create it (with the layer inside) at the top.
+// Requires the MMGIS user to have mission-edit permission — failure is
+// non-fatal (the layer stays for this session either way).
+async function persistLayerToMission(layerObj) {
+    const mission = L_.mission
+    if (!mission) return false
+    const post = (body) =>
+        mmgisFetch('api/configure/addLayer', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+        })
+            .then((r) => r.json())
+            .catch(() => ({ status: 'failure', message: 'network error' }))
+
+    let r = await post({
+        mission,
+        layer: layerObj,
+        placement: { path: GROUP_DISPLAY_NAME, index: 0 },
+    })
+    if (r.status === 'success') return true
+    if (!/not found/i.test(String(r.message || ''))) {
+        console.warn('[WorkflowsTool] persist failed:', r.message)
+        return false
+    }
+    r = await post({
+        mission,
+        layer: {
+            name: GROUP_DISPLAY_NAME,
+            uuid: GROUP_UUID,
+            type: 'header',
+            expanded: true,
+            visibility: true,
+            sublayers: [layerObj],
+        },
+        placement: { index: 0 },
+    })
+    if (r.status === 'success') return true
+    console.warn('[WorkflowsTool] persist failed:', r.message)
+    return false
+}
+
 function addLayerForJob(jobId, job) {
     const uri = job.autoAddableUri
     if (!uri) return
@@ -689,7 +738,12 @@ function addLayerForJob(jobId, job) {
                 layersTool.make()
             }
             job.layerAdded = true
+            job.persisted = 'pending'
             Workflows.renderJobs()
+            persistLayerToMission(layerObj).then((ok) => {
+                job.persisted = ok
+                Workflows.renderJobs()
+            })
         } catch (err) {
             console.warn('[WorkflowsTool] addLayer failed', err)
         }
@@ -940,6 +994,10 @@ const Workflows = {
                     Math.ceil(Workflows.jobIds.length / PAGE_SIZE) - 1
                 )
                 if (Workflows.page > maxPage) Workflows.page = maxPage
+                // Render the id list immediately (rows show as loading…)
+                // so a slow or partially failing detail fetch can't keep
+                // the panel stale.
+                Workflows.renderJobs()
                 return Workflows.fetchPageDetails()
             })
             .then(() => {
@@ -959,7 +1017,15 @@ const Workflows = {
         const slice = Workflows.jobIds.slice(start, start + PAGE_SIZE)
         return Promise.all(
             slice.map((id) =>
-                pollJob(id).then((body) => mergeJobUpdate(id, body))
+                pollJob(id)
+                    .then((body) => mergeJobUpdate(id, body))
+                    // One bad job must never sink the whole page's render.
+                    .catch((err) =>
+                        console.warn(
+                            `[WorkflowsTool] detail fetch failed for ${id}`,
+                            err
+                        )
+                    )
             )
         )
     },
@@ -1182,7 +1248,10 @@ function buildExpandedSection(job, jobId) {
     )
     $nameSave.on('click', function () {
         const newName = $nameInput.val().trim()
-        if (job) job.name = newName
+        // Write onto the CURRENT job object — polling replaces
+        // Workflows.jobs[id] wholesale, so the reference this expanded view
+        // captured at render time may be stale.
+        if (Workflows.jobs[jobId]) Workflows.jobs[jobId].name = newName
         updateJobName(jobId, newName)
         Workflows.renderJobs()
     })
@@ -1231,28 +1300,57 @@ function buildExpandedSection(job, jobId) {
         $exp.append($outs)
 
         if (statusClass === 'completed' && job.autoAddableUri) {
+            // A layer counts as added if we added it this session OR it was
+            // persisted to the mission config earlier and came in via the
+            // normal config parse on load.
+            const added =
+                job.layerAdded ||
+                L_.layers.data[`workflow-${jobId}`] != null
             // Two explicit controls: "Add layer" (one-time) and a visibility
             // toggle that's only live once the layer exists on the map.
             const $row = $('<div class="wf-map-btn-row"></div>')
             $row.append(
                 `<button type="button" class="wf-map-btn wf-layer-add" data-job-id="${escapeHTML(
                     jobId
-                )}"${job.layerAdded ? ' disabled' : ''}>${
-                    job.layerAdded ? 'Layer added' : 'Add layer'
+                )}"${added ? ' disabled' : ''}>${
+                    added ? 'Layer added' : 'Add layer'
                 }</button>`
             )
+            // Visibility control styled like the Layers panel's filled
+            // checkbox. The wf-layer-toggle handler no-ops until the layer
+            // actually exists on the map.
             $row.append(
-                `<button type="button" class="wf-map-btn wf-layer-toggle" data-job-id="${escapeHTML(
-                    jobId
-                )}"${!job.layerAdded ? ' disabled' : ''}>${
-                    job.layerAdded
-                        ? visible
-                            ? 'Hide layer'
-                            : 'Show layer'
-                        : 'Show/Hide'
-                }</button>`
+                `<div class="wf-layer-visibility wf-layer-toggle${
+                    added ? '' : ' disabled'
+                }" data-job-id="${escapeHTML(jobId)}" title="${
+                    added
+                        ? 'Toggle layer visibility'
+                        : 'Add the layer first'
+                }">` +
+                    `<div class="wf-checkbox${
+                        added && visible ? ' on' : ''
+                    }"></div>` +
+                    `<span>Visible</span>` +
+                    `</div>`
             )
             $exp.append($row)
+            if (job.persisted === 'pending') {
+                $exp.append(
+                    '<div class="wf-exp-hint">Saving to mission configuration…</div>'
+                )
+            } else if (job.persisted === true) {
+                $exp.append(
+                    '<div class="wf-exp-hint">Saved to mission configuration — persists across reloads.</div>'
+                )
+            } else if (job.persisted === false) {
+                $exp.append(
+                    '<div class="wf-exp-hint">Added for this session only — could not save to the mission configuration (this needs mission-edit permission).</div>'
+                )
+            } else if (added && !job.layerAdded) {
+                $exp.append(
+                    '<div class="wf-exp-hint">Layer is saved in the mission configuration.</div>'
+                )
+            }
         }
     }
 
