@@ -1008,35 +1008,6 @@ const Workflows = {
                     `<div class="wf-job-error">${escapeHTML(job.error)}</div>`
                 )
             }
-            if (Array.isArray(job.output_uris) && job.output_uris.length > 0) {
-                const layerName = `Workflow ${id}`
-                const visible = L_.layers.on[layerName] === true
-                $div.append(
-                    `<div class="wf-job-output-label">outputs (${job.output_uris.length})</div>`
-                )
-                const $outs = $('<div class="wf-job-outputs"></div>')
-                job.output_uris.forEach((u) => {
-                    const isAddable = u === job.autoAddableUri
-                    let layerLink = ''
-                    if (isAddable && statusClass === 'completed') {
-                        layerLink = job.layerAdded
-                            ? ` · <a class="wf-layer-toggle" data-job-id="${escapeHTML(
-                                  id
-                              )}" href="#">${visible ? 'hide' : 'show'} layer</a>`
-                            : ` · <a class="wf-layer-add" data-job-id="${escapeHTML(
-                                  id
-                              )}" href="#">add as layer</a>`
-                    }
-                    $outs.append(
-                        `<div class="wf-job-output-line" title="${escapeHTML(
-                            u
-                        )}">→ ${escapeHTML(
-                            formatParamValue(u)
-                        )}${layerLink}</div>`
-                    )
-                })
-                $div.append($outs)
-            }
             if (isExpanded) {
                 $div.append(buildExpandedSection(job, id))
             }
@@ -1160,6 +1131,42 @@ function buildExpandedSection(job, jobId) {
         )
     }
 
+    // Outputs list, plus a single "Add to map" button that adds the run's
+    // STAC item (or best other loadable output) as a layer.
+    if (Array.isArray(job.output_uris) && job.output_uris.length > 0) {
+        const statusClass = normalizeStatus(job.status)
+        const layerName = `Workflow ${jobId}`
+        const visible = L_.layers.on[layerName] === true
+        $exp.append(
+            `<div class="wf-exp-label">Outputs (${job.output_uris.length})</div>`
+        )
+        const $outs = $('<div class="wf-job-outputs"></div>')
+        job.output_uris.forEach((u) => {
+            $outs.append(
+                `<div class="wf-job-output-line" title="${escapeHTML(
+                    u
+                )}">→ ${escapeHTML(formatParamValue(u))}</div>`
+            )
+        })
+        $exp.append($outs)
+
+        if (statusClass === 'completed' && job.autoAddableUri) {
+            if (!job.layerAdded) {
+                $exp.append(
+                    `<button type="button" class="wf-map-btn wf-layer-add" data-job-id="${escapeHTML(
+                        jobId
+                    )}">Add to map</button>`
+                )
+            } else {
+                $exp.append(
+                    `<button type="button" class="wf-map-btn wf-layer-toggle" data-job-id="${escapeHTML(
+                        jobId
+                    )}">${visible ? 'Hide from map' : 'Show on map'}</button>`
+                )
+            }
+        }
+    }
+
     // Server-side metadata, when present.
     const body = job.body
     if (body) {
@@ -1269,15 +1276,15 @@ function interfaceWithMMGIS() {
     $root.append($endpointSelect)
     $root.append('<div class="wf-endpoint-desc" id="wf-endpoint-desc"></div>')
 
+    $root.append('<div class="wf-section-label">Run Name *</div>')
+    const $nameInput = $(
+        '<input type="text" id="wf-submit-name" class="wf-name-input" placeholder="e.g. SF Sept-15 forecast (required)" />'
+    )
+    $root.append($nameInput)
+
     $root.append('<div class="wf-section-label">Parameters</div>')
     const $form = $('<div id="wf-form"></div>')
     $root.append($form)
-
-    $root.append('<div class="wf-section-label">Name (optional)</div>')
-    const $nameInput = $(
-        '<input type="text" id="wf-submit-name" class="wf-name-input" placeholder="e.g. SF Sept-15 forecast" />'
-    )
-    $root.append($nameInput)
 
     const $submit = $('<button class="wf-submit" disabled>Loading…</button>')
     $root.append($submit)
@@ -1324,7 +1331,7 @@ function interfaceWithMMGIS() {
         if (!id) return
         const job = Workflows.jobs[id]
         if (!job || !job.autoAddableUri || job.layerAdded) return
-        $(this).text('adding…')
+        $(this).text('Adding…').attr('disabled', true)
         addLayerForJob(id, job)
     })
 
@@ -1406,8 +1413,13 @@ function interfaceWithMMGIS() {
 
     $submit.on('click', function () {
         if (!Workflows.selectedEndpointPath) return
-        const payload = collectPayload()
         const name = $nameInput.val().trim()
+        if (!name) {
+            window.alert('Please name this run before submitting.')
+            $nameInput.trigger('focus')
+            return
+        }
+        const payload = collectPayload()
         $submit.attr('disabled', true).text('Submitting…')
         Workflows.submit(Workflows.selectedEndpointPath, payload, name)
             .then(() => {

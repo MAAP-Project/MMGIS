@@ -426,25 +426,28 @@
     min-width: 0;
 }
 
-#workflowsTool .wf-layer-toggle {
+#workflowsTool .wf-map-btn {
+    display: block;
+    width: 100%;
+    margin-top: 6px;
+    background: var(--color-a);
+    color: var(--color-l);
+    border: none;
+    padding: 6px;
+    cursor: pointer;
+    text-transform: uppercase;
+    font-size: 11px;
+    letter-spacing: 0.04em;
+}
+
+#workflowsTool .wf-map-btn:hover {
+    filter: brightness(1.15);
+}
+
+#workflowsTool .wf-map-btn.wf-layer-toggle {
+    background: transparent;
     color: #66bb6a;
-    text-decoration: underline;
-    cursor: pointer;
-}
-
-#workflowsTool .wf-layer-toggle:hover {
-    color: #aee0a8;
-}
-
-#workflowsTool .wf-layer-add {
-    color: #64b5f6;
-    text-decoration: underline;
-    cursor: pointer;
-    white-space: nowrap;
-}
-
-#workflowsTool .wf-layer-add:hover {
-    color: #a8d4f8;
+    border: 1px solid #3a5c3c;
 }
 
 #workflowsTool .wf-endpoint-desc {
