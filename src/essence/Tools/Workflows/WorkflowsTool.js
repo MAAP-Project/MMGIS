@@ -985,12 +985,16 @@ const Workflows = {
                 const $outs = $('<div class="wf-job-outputs"></div>')
                 job.output_uris.forEach((u) => {
                     const isAddable = u === job.autoAddableUri
-                    const layerLink =
-                        isAddable && job.layerAdded
+                    let layerLink = ''
+                    if (isAddable && statusClass === 'completed') {
+                        layerLink = job.layerAdded
                             ? ` · <a class="wf-layer-toggle" data-job-id="${escapeHTML(
                                   id
                               )}" href="#">${visible ? 'hide' : 'show'} layer</a>`
-                            : ''
+                            : ` · <a class="wf-layer-add" data-job-id="${escapeHTML(
+                                  id
+                              )}" href="#">add as layer</a>`
+                    }
                     $outs.append(
                         `<div class="wf-job-output-line" title="${escapeHTML(
                             u
@@ -1043,13 +1047,8 @@ function mergeJobUpdate(id, body) {
         fromServer: true,
     }
     Workflows.jobs[id] = next
-    if (
-        next.status === 'completed' &&
-        !next.layerAdded &&
-        next.autoAddableUri
-    ) {
-        addLayerForJob(id, next)
-    }
+    // No auto-add: completed jobs with an addable output render an
+    // "add as layer" button instead — the user decides what lands on the map.
 }
 
 // Compact value renderer for the always-visible params summary. For URI-like
@@ -1283,6 +1282,18 @@ function interfaceWithMMGIS() {
             Workflows.paramsExpandedIds.delete(id)
         else Workflows.paramsExpandedIds.add(id)
         Workflows.renderJobs()
+    })
+
+    // Add a completed job's STAC/vector output as a map layer. Delegated.
+    $root.find('.wf-jobs-list').on('click', '.wf-layer-add', function (e) {
+        e.preventDefault()
+        e.stopPropagation()
+        const id = $(this).attr('data-job-id')
+        if (!id) return
+        const job = Workflows.jobs[id]
+        if (!job || !job.autoAddableUri || job.layerAdded) return
+        $(this).text('adding…')
+        addLayerForJob(id, job)
     })
 
     // Toggle layer visibility for a completed job's output. Delegated.

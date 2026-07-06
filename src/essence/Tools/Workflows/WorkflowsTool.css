@@ -436,6 +436,17 @@
     color: #aee0a8;
 }
 
+#workflowsTool .wf-layer-add {
+    color: #64b5f6;
+    text-decoration: underline;
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+#workflowsTool .wf-layer-add:hover {
+    color: #a8d4f8;
+}
+
 #workflowsTool .wf-endpoint-desc {
     font-size: 11px;
     color: #888;
