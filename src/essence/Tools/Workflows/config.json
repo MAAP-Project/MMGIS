@@ -1,0 +1,33 @@
+{
+    "defaultIcon": "cog-sync",
+    "description": "Submit jobs to an external workflows API and add their outputs as map layers.",
+    "descriptionFull": {
+        "title": "Submits jobs to the CZDT workflows API and adds vector outputs as layers when jobs complete. Endpoints are hardcoded in WorkflowsTool.js. The mission's 'workflows.baseUrl' selects between mock mode (empty or 'mock://') and direct-to-API mode; in direct mode the browser talks to the API with OAuth session cookies via 'Connect'.",
+        "example": {
+            "pollIntervalMs": "(int) how often to poll job status [default 2000]"
+        }
+    },
+    "hasVars": true,
+    "name": "Workflows",
+    "toolbarPriority": 50,
+    "paths": {
+        "WorkflowsTool": "essence/Tools/Workflows/WorkflowsTool"
+    },
+    "config": {
+        "rows": [
+            {
+                "components": [
+                    {
+                        "field": "variables.pollIntervalMs",
+                        "name": "Poll Interval (ms)",
+                        "description": "How often the tool polls workflow job status.",
+                        "type": "number",
+                        "min": 500,
+                        "step": 500,
+                        "width": 4
+                    }
+                ]
+            }
+        ]
+    }
+}

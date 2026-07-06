@@ -3619,6 +3619,17 @@
         "animationMP4": true,
         "animationPNG": false
       }
+    },
+    {
+      "name": "Workflows",
+      "icon": "cog-sync",
+      "js": "WorkflowsTool",
+      "variables": {
+        "pollIntervalMs": 2000
+      }
     }
-  ]
+  ],
+  "workflows": {
+    "baseUrl": "https://www.czdt.smce.nasa.gov"
+  }
 }
