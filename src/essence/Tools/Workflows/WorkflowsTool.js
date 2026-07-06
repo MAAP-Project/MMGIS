@@ -688,6 +688,55 @@ async function persistLayerToMission(layerObj) {
     return false
 }
 
+// Keep an added layer's label (and provenance description) in sync when the
+// user renames the run — in-memory, in the Layers panel, and in the stored
+// mission config when the layer was persisted there.
+function syncLayerName(jobId) {
+    const uuid = `workflow-${jobId}`
+    const layerObj = L_.layers.data[uuid]
+    if (!layerObj) return
+    const job = Workflows.jobs[jobId] || {}
+    layerObj.display_name = job.name || `Workflow ${jobId}`
+    layerObj.description = buildLayerDescription(jobId, job)
+    // dataFlat/configData hold the same object reference, so the Layers
+    // panel picks the new label up on its next build; rebuild now if showing.
+    const layersTool = ToolController_.getTool
+        ? ToolController_.getTool('LayersTool')
+        : null
+    if (
+        ToolController_.activeToolName === 'LayersTool' &&
+        layersTool &&
+        layersTool.destroy &&
+        layersTool.make
+    ) {
+        layersTool.destroy()
+        layersTool.make()
+    }
+    // Best-effort config sync — a "not found" just means the layer was never
+    // persisted (session-only), which is fine.
+    mmgisFetch('api/configure/updateLayer', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            mission: L_.mission,
+            layerUUID: uuid,
+            layer: {
+                display_name: layerObj.display_name,
+                description: layerObj.description,
+            },
+        }),
+    })
+        .then((r) => r.json())
+        .then((r) => {
+            if (
+                r.status !== 'success' &&
+                !/not found/i.test(String(r.message || ''))
+            )
+                console.warn('[WorkflowsTool] layer rename sync:', r.message)
+        })
+        .catch(() => {})
+}
+
 function addLayerForJob(jobId, job) {
     const uri = job.autoAddableUri
     if (!uri) return
@@ -724,6 +773,10 @@ function addLayerForJob(jobId, job) {
             L_._layersParent = L_._layersParent || {}
             L_._layersParent[uuid] = GROUP_UUID
             await L_.Map_.makeLayer(layerObj, true)
+            // makeLayer only constructs the Leaflet layer; addVisible is
+            // what actually attaches it to the map (same two-step
+            // addLayerToLayersData performs).
+            L_.addVisible(L_.Map_, [uuid])
             // Refresh the Layers panel if it happens to be showing.
             const layersTool = ToolController_.getTool
                 ? ToolController_.getTool('LayersTool')
@@ -831,6 +884,7 @@ const Workflows = {
     selectedEndpointPath: null,
     jobs: {},
     jobIds: [],
+    filterText: '',
     expandedIds: null, // initialized in make()
     paramsExpandedIds: null, // initialized in make()
     page: 0,
@@ -1012,9 +1066,24 @@ const Workflows = {
             })
     },
 
+    // The job ids currently visible given the text filter (matches run name
+    // or workflow id, case-insensitive).
+    getVisibleJobIds: function () {
+        const f = Workflows.filterText
+        if (!f) return Workflows.jobIds
+        return Workflows.jobIds.filter((id) => {
+            if (id.toLowerCase().indexOf(f) !== -1) return true
+            const name = (Workflows.jobs[id] && Workflows.jobs[id].name) || ''
+            return name.toLowerCase().indexOf(f) !== -1
+        })
+    },
+
     fetchPageDetails: function () {
         const start = Workflows.page * PAGE_SIZE
-        const slice = Workflows.jobIds.slice(start, start + PAGE_SIZE)
+        const slice = Workflows.getVisibleJobIds().slice(
+            start,
+            start + PAGE_SIZE
+        )
         return Promise.all(
             slice.map((id) =>
                 pollJob(id)
@@ -1033,7 +1102,7 @@ const Workflows = {
     goToPage: function (n) {
         const maxPage = Math.max(
             0,
-            Math.ceil(Workflows.jobIds.length / PAGE_SIZE) - 1
+            Math.ceil(Workflows.getVisibleJobIds().length / PAGE_SIZE) - 1
         )
         const target = Math.max(0, Math.min(n, maxPage))
         if (target === Workflows.page) return
@@ -1078,9 +1147,16 @@ const Workflows = {
             )
         }
 
-        const total = Workflows.jobIds.length
+        const visibleIds = Workflows.getVisibleJobIds()
+        const total = visibleIds.length
         if (total === 0) {
-            $list.append('<div class="wf-empty">No jobs yet.</div>')
+            $list.append(
+                `<div class="wf-empty">${
+                    Workflows.filterText
+                        ? 'No jobs match the filter.'
+                        : 'No jobs yet.'
+                }</div>`
+            )
             renderPagination(0, 0, 0)
             return
         }
@@ -1088,7 +1164,7 @@ const Workflows = {
         const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
         if (Workflows.page >= totalPages) Workflows.page = totalPages - 1
         const start = Workflows.page * PAGE_SIZE
-        const pageIds = Workflows.jobIds.slice(start, start + PAGE_SIZE)
+        const pageIds = visibleIds.slice(start, start + PAGE_SIZE)
 
         pageIds.forEach((id) => {
             const job = Workflows.jobs[id] || { status: 'loading…', endpoint: '' }
@@ -1099,11 +1175,26 @@ const Workflows = {
                 ? `<span class="wf-job-name">${escapeHTML(job.name)}</span> ` +
                   `<span class="wf-job-id-mini">${escapeHTML(id)}</span>`
                 : `<span class="wf-job-id">${escapeHTML(id)}</span>`
+            // Inline visibility checkbox on the tile itself once the layer
+            // exists — no need to open the drawer just to toggle. The
+            // wf-layer-toggle handler stops propagation, so clicking it
+            // doesn't expand/collapse the row.
+            const layerExists = L_.layers.data[`workflow-${id}`] != null
+            const tileVisibility = layerExists
+                ? `<div class="wf-tile-visibility wf-layer-toggle" data-job-id="${escapeHTML(
+                      id
+                  )}" title="Toggle layer visibility">` +
+                  `<div class="wf-checkbox${
+                      L_.layers.on[`workflow-${id}`] === true ? ' on' : ''
+                  }"></div>` +
+                  `</div>`
+                : ''
             const $header = $(
                 `<div class="wf-job-header" data-job-id="${escapeHTML(id)}">` +
                     `<span class="wf-job-chevron">${isExpanded ? '▼' : '▶'}</span> ` +
                     primary + ' ' +
                     `<span class="wf-job-status ${escapeHTML(statusClass)}">${escapeHTML(job.status)}</span>` +
+                    tileVisibility +
                     `</div>`
             )
             $div.append($header)
@@ -1253,6 +1344,7 @@ function buildExpandedSection(job, jobId) {
         // captured at render time may be stale.
         if (Workflows.jobs[jobId]) Workflows.jobs[jobId].name = newName
         updateJobName(jobId, newName)
+        syncLayerName(jobId)
         Workflows.renderJobs()
     })
     $nameInput.on('keydown', function (e) {
@@ -1281,23 +1373,11 @@ function buildExpandedSection(job, jobId) {
         )
     }
 
-    // Outputs list, plus a single "Add to map" button that adds the run's
-    // STAC item (or best other loadable output) as a layer.
-    if (Array.isArray(job.output_uris) && job.output_uris.length > 0) {
+    // Raw output URIs are intentionally NOT listed (s3/internal paths are
+    // noise to end users) — just the layer controls for the loadable output.
+    {
         const statusClass = normalizeStatus(job.status)
         const visible = L_.layers.on[`workflow-${jobId}`] === true
-        $exp.append(
-            `<div class="wf-exp-label">Outputs (${job.output_uris.length})</div>`
-        )
-        const $outs = $('<div class="wf-job-outputs"></div>')
-        job.output_uris.forEach((u) => {
-            $outs.append(
-                `<div class="wf-job-output-line" title="${escapeHTML(
-                    u
-                )}">→ ${escapeHTML(formatParamValue(u))}</div>`
-            )
-        })
-        $exp.append($outs)
 
         if (statusClass === 'completed' && job.autoAddableUri) {
             // A layer counts as added if we added it this session OR it was
@@ -1477,9 +1557,22 @@ function interfaceWithMMGIS() {
     $root.append($submit)
 
     $root.append(
-        '<div class="wf-jobs"><div class="wf-jobs-header"><div class="wf-section-label">Jobs</div><button class="wf-refresh-btn" type="button">Refresh</button></div><div class="wf-jobs-list"></div><div class="wf-pagination"></div></div>'
+        '<div class="wf-jobs"><div class="wf-jobs-header"><div class="wf-section-label">Jobs</div><button class="wf-refresh-btn" type="button">Refresh</button></div><input type="text" class="wf-jobs-filter" placeholder="Filter by name or id…" spellcheck="false" /><div class="wf-jobs-list"></div><div class="wf-pagination"></div></div>'
     )
     Workflows.renderJobs()
+
+    let filterFetchTimer = null
+    $root.find('.wf-jobs-filter').on('input', function () {
+        Workflows.filterText = ($(this).val() || '').trim().toLowerCase()
+        Workflows.page = 0
+        Workflows.renderJobs()
+        // Fetch details for the newly visible page, lightly debounced so
+        // fast typing doesn't spray requests.
+        clearTimeout(filterFetchTimer)
+        filterFetchTimer = setTimeout(() => {
+            Workflows.fetchPageDetails().then(() => Workflows.renderJobs())
+        }, 300)
+    })
 
     $root.find('.wf-refresh-btn').on('click', function () {
         const $btn = $(this)

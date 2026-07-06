@@ -114,6 +114,17 @@
     align-items: center;
 }
 
+#workflowsTool .wf-jobs-filter {
+    width: 100%;
+    box-sizing: border-box;
+    background: var(--color-k);
+    color: #fff;
+    border: 1px solid #444;
+    padding: 4px 6px;
+    font-size: 11px;
+    margin: 4px 0 6px 0;
+}
+
 #workflowsTool .wf-refresh-btn {
     background: transparent;
     color: #cfcfcf;
@@ -371,28 +382,6 @@
     color: #aaa;
 }
 
-#workflowsTool .wf-job-output-label {
-    margin-top: 6px;
-    font-size: 10px;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    color: #888;
-}
-
-#workflowsTool .wf-job-outputs {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    margin-top: 2px;
-}
-
-#workflowsTool .wf-job-output-line {
-    font-size: 10px;
-    color: #cfcfcf;
-    font-family: monospace;
-    word-break: break-all;
-}
-
 #workflowsTool .wf-params-toggle {
     cursor: pointer;
     user-select: none;
@@ -492,6 +481,23 @@
 #workflowsTool
     .wf-layer-visibility:not(.disabled):hover
     .wf-checkbox:not(.on) {
+    background: rgba(255, 255, 255, 0.08);
+}
+
+#workflowsTool .wf-tile-visibility {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    cursor: pointer;
+}
+
+#workflowsTool .wf-tile-visibility .wf-checkbox {
+    width: 14px;
+    height: 14px;
+    margin: 2px;
+}
+
+#workflowsTool .wf-tile-visibility:hover .wf-checkbox:not(.on) {
     background: rgba(255, 255, 255, 0.08);
 }
 
