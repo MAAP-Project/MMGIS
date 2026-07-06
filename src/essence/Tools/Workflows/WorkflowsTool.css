@@ -501,27 +501,6 @@
     cursor: not-allowed;
 }
 
-#workflowsTool .wf-token-input {
-    width: 100%;
-    box-sizing: border-box;
-    margin-bottom: 6px;
-    font-family: monospace;
-    font-size: 10px;
-    resize: vertical;
-    word-break: break-all;
-    background: var(--color-k);
-    color: #fff;
-    border: 1px solid #444;
-    padding: 4px 6px;
-}
-
-#workflowsTool .wf-auth-msg code {
-    background: rgba(255, 255, 255, 0.08);
-    padding: 1px 4px;
-    border-radius: 2px;
-    font-size: 10px;
-}
-
 #workflowsTool .wf-signout {
     color: #aac;
     margin-left: 6px;

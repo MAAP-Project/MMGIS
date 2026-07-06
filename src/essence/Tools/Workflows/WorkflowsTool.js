@@ -9,25 +9,11 @@ import L_ from '../../Basics/Layers_/Layers_'
 
 const VECTOR_EXTS = ['geojson', 'json', 'gpkg', 'kml']
 const DEFAULT_POLL_INTERVAL_MS = 30000
-const TOKEN_STORAGE_KEY = 'mmgis.workflows.token'
+const AUTH_POLL_INTERVAL_MS = 2000
+const AUTH_POLL_TIMEOUT_MS = 5 * 60 * 1000
 const SUBMITTED_STORAGE_KEY = 'mmgis.workflows.submitted'
 const SUBMITTED_MAX_ENTRIES = 100
 const PAGE_SIZE = 10
-
-function getStoredToken() {
-    try {
-        return window.localStorage.getItem(TOKEN_STORAGE_KEY) || ''
-    } catch (e) {
-        return ''
-    }
-}
-
-function setStoredToken(t) {
-    try {
-        if (t) window.localStorage.setItem(TOKEN_STORAGE_KEY, t)
-        else window.localStorage.removeItem(TOKEN_STORAGE_KEY)
-    } catch (e) {}
-}
 
 // Per-user job history is stored server-side in the MMGIS DB
 // (workflow_submissions table). All three helpers below talk to that API.
@@ -141,20 +127,6 @@ function migrateLegacyLocalStorageRegistry() {
             window.localStorage.removeItem(SUBMITTED_STORAGE_KEY)
         } catch (e) {}
     })
-}
-
-// Token presence + basic JWT shape check only. The server validates exp,
-// signature, audience etc. — relying on the client clock to decide if a token
-// is "expired" makes us hostile to clock skew (a laptop drifting 30s off makes
-// a 300s-TTL token look dead-on-arrival).
-function isTokenValid(token) {
-    if (!token || typeof token !== 'string') return false
-    const t = token.trim()
-    if (t.length === 0) return false
-    // JWT is dot-separated 3 parts. Accept anything that at least has 3 parts;
-    // anything wonkier the server will reject and we'll prompt for a new one.
-    const parts = t.split('.')
-    return parts.length === 3 && parts.every((p) => p.length > 0)
 }
 
 // Hardcoded from the cmss_api OpenAPI spec. When the upstream API gains or
@@ -646,15 +618,13 @@ function addLayerForJob(jobId, job) {
 // ---- HTTP helpers ----
 
 function directFetchJSON(url, init) {
-    const headers = {
-        Accept: 'application/json',
-        ...((init && init.headers) || {}),
-    }
-    const token = getStoredToken()
-    if (token) headers.Authorization = `Bearer ${token}`
     return fetch(url, {
+        credentials: 'include',
         ...(init || {}),
-        headers,
+        headers: {
+            Accept: 'application/json',
+            ...((init && init.headers) || {}),
+        },
     }).then(async (res) => {
         const text = await res.text()
         let json
@@ -665,6 +635,23 @@ function directFetchJSON(url, init) {
         }
         return { ok: res.ok, status: res.status, body: json }
     })
+}
+
+function checkAuth() {
+    return directFetchJSON(
+        trimSlash(Workflows.baseUrl) + '/api/auth-status'
+    )
+        .then((r) => {
+            if (!r.ok) return false
+            if (
+                r.body &&
+                (r.body.authenticated === false ||
+                    r.body.status === 'unauthenticated')
+            )
+                return false
+            return true
+        })
+        .catch(() => false)
 }
 
 function submitJob(endpointPath, payload) {
@@ -713,6 +700,8 @@ const Workflows = {
     paramsExpandedIds: null, // initialized in make()
     page: 0,
     pollTimer: null,
+    authPollTimer: null,
+    onAuthReady: null,
     pollIntervalMs: DEFAULT_POLL_INTERVAL_MS,
     MMGISInterface: null,
 
@@ -772,6 +761,46 @@ const Workflows = {
             clearInterval(Workflows.pollTimer)
             Workflows.pollTimer = null
         }
+        if (Workflows.authPollTimer) {
+            clearInterval(Workflows.authPollTimer)
+            Workflows.authPollTimer = null
+        }
+    },
+
+    // Opens the workflows API's OAuth login in a popup, then polls
+    // auth-status until the session cookie lands (or times out).
+    connect: function () {
+        const popup = window.open(
+            trimSlash(Workflows.baseUrl) + '/api/login',
+            'wf_login',
+            'width=520,height=720,resizable,scrollbars'
+        )
+        if (!popup) {
+            window.alert(
+                'Popup blocked. Allow popups for this site and click Connect again.'
+            )
+            return
+        }
+        Workflows.startAuthPoll()
+    },
+
+    startAuthPoll: function () {
+        if (Workflows.authPollTimer) return
+        const startedAt = Date.now()
+        Workflows.authPollTimer = setInterval(() => {
+            if (Date.now() - startedAt > AUTH_POLL_TIMEOUT_MS) {
+                clearInterval(Workflows.authPollTimer)
+                Workflows.authPollTimer = null
+                return
+            }
+            checkAuth().then((ok) => {
+                if (!ok) return
+                clearInterval(Workflows.authPollTimer)
+                Workflows.authPollTimer = null
+                if (typeof Workflows.onAuthReady === 'function')
+                    Workflows.onAuthReady()
+            })
+        }, AUTH_POLL_INTERVAL_MS)
     },
 
     submit: function (endpointPath, payload, name) {
@@ -1330,38 +1359,38 @@ function interfaceWithMMGIS() {
         $submit.text('Submit').attr('disabled', false)
     }
 
-    function renderTokenPaste() {
+    function renderUnauthenticated() {
         $authBanner.empty()
         $authBanner.append(
-            `<div class="wf-auth-msg">Paste the <code>session</code> cookie value (Keycloak JWT) from <code>${escapeHTML(
+            `<div class="wf-auth-msg">Not signed in to ${escapeHTML(
                 Workflows.baseUrl
-            )}</code>. Stored in localStorage; tokens typically last ~5 minutes.</div>`
+            )}.</div>`
         )
-        const $input = $(
-            '<textarea class="wf-token-input" placeholder="eyJhbGc..." rows="3" spellcheck="false"></textarea>'
-        )
-        const $btn = $('<button class="wf-connect-btn">Save token</button>')
+        const $btn = $('<button class="wf-connect-btn">Connect</button>')
         $btn.on('click', function () {
-            const t = $input.val().trim()
-            if (!t) return
-            setStoredToken(t)
-            renderAuthenticated()
+            $btn.attr('disabled', true).text('Waiting for sign-in…')
+            Workflows.onAuthReady = function () {
+                Workflows.onAuthReady = null
+                renderAuthenticated()
+            }
+            Workflows.connect()
         })
-        $authBanner.append($input).append($btn)
-        $submit.text('Paste token to continue').attr('disabled', true)
+        $authBanner.append($btn)
+        $submit.text('Sign in to continue').attr('disabled', true)
     }
 
     function renderAuthenticated() {
         $authBanner.empty()
         const $row = $(
-            `<div class="wf-auth-ok">Authorized · ${escapeHTML(
+            `<div class="wf-auth-ok">Signed in · ${escapeHTML(
                 Workflows.baseUrl
-            )} <a class="wf-signout" href="#">clear token</a></div>`
+            )} <a class="wf-signout" href="#">sign out</a></div>`
         )
         $row.find('.wf-signout').on('click', function (e) {
             e.preventDefault()
-            setStoredToken('')
-            renderTokenPaste()
+            directFetchJSON(
+                trimSlash(Workflows.baseUrl) + '/api/logout'
+            ).finally(() => renderUnauthenticated())
         })
         $authBanner.append($row)
         enableSubmit()
@@ -1393,13 +1422,15 @@ function interfaceWithMMGIS() {
 
     if (!Workflows.baseUrl) {
         $authBanner.append(
-            '<div class="wf-auth-msg">No workflows.baseUrl configured for this mission.</div>'
+            '<div class="wf-auth-msg">No API Base URL configured. Set it in the Configure page under Tools → Workflows.</div>'
         )
         $submit.text('Not configured').attr('disabled', true)
-    } else if (isTokenValid(getStoredToken())) {
-        renderAuthenticated()
     } else {
-        renderTokenPaste()
+        $authBanner.append('<div class="wf-auth-msg">Checking sign-in…</div>')
+        checkAuth().then((ok) => {
+            if (ok) renderAuthenticated()
+            else renderUnauthenticated()
+        })
     }
 
     this.separateFromMMGIS = function () {}

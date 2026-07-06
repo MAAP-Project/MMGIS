@@ -3625,7 +3625,7 @@
       "icon": "cog-sync",
       "js": "WorkflowsTool",
       "variables": {
-        "baseUrl": "https://www.czdt.smce.nasa.gov",
+        "baseUrl": "",
         "pollIntervalMs": 2000
       }
     }
