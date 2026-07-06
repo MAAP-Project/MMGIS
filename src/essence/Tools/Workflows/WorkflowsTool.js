@@ -1,6 +1,7 @@
 import $ from 'jquery'
 import './WorkflowsTool.css'
 import L_ from '../../Basics/Layers_/Layers_'
+import ToolController_ from '../../Basics/ToolController_/ToolController_'
 
 // mmgisAPI is intentionally accessed via window.mmgisAPI at call time rather
 // than imported at module top. Importing it here creates a cycle through
@@ -535,11 +536,44 @@ function parseStacItemUrl(u) {
     return { collection: m[1], item: m[2] }
 }
 
-function buildLayerObjForJob(jobId, uri) {
+const GROUP_UUID = 'workflows-tool-group'
+const GROUP_DISPLAY_NAME = 'Workflows'
+
+// Get (or lazily create + register) the header group all workflow layers
+// live under in the Layers panel. The same object reference is shared
+// between L_.configData.layers and L_.layers.data, mirroring parseConfig.
+function ensureWorkflowsGroup() {
+    if (L_.layers.data[GROUP_UUID]) return L_.layers.data[GROUP_UUID]
+    const header = {
+        name: GROUP_UUID,
+        uuid: GROUP_UUID,
+        display_name: GROUP_DISPLAY_NAME,
+        type: 'header',
+        expanded: true,
+        visibility: true,
+        sublayers: [],
+    }
+    L_.layers.data[GROUP_UUID] = header
+    L_.layers.nameToUUID = L_.layers.nameToUUID || {}
+    L_.layers.nameToUUID[GROUP_DISPLAY_NAME] = [GROUP_UUID]
+    L_.layers.on = L_.layers.on || {}
+    L_.layers.on[GROUP_UUID] = true // headers always start on
+    L_.layers.opacity = L_.layers.opacity || {}
+    L_.layers.opacity[GROUP_UUID] = 1
+    L_.layers.dataFlat = L_.layers.dataFlat || []
+    L_.layers.dataFlat.unshift(header)
+    L_.configData.layers = L_.configData.layers || []
+    L_.configData.layers.unshift(header)
+    return header
+}
+
+function buildLayerObjForJob(jobId, uri, runName) {
     const uuid = `workflow-${jobId}`
     const base = {
-        name: `Workflow ${jobId}`,
+        // MMGIS keys everything by uuid-as-name; display_name is the label.
+        name: uuid,
         uuid,
+        display_name: runName || `Workflow ${jobId}`,
         initialOpacity: 1,
         visibility: true,
         controlled: false,
@@ -579,13 +613,12 @@ function addLayerForJob(jobId, job) {
     const uri = job.autoAddableUri
     if (!uri) return
     const uuid = `workflow-${jobId}`
-    const layerObj = buildLayerObjForJob(jobId, uri)
+    const layerObj = buildLayerObjForJob(jobId, uri, job.name)
     // Skip mmgisAPI.addLayer (it forgets to re-parse the config) and skip the
     // resetConfig path (re-runs parseConfig over every existing mission layer,
     // surfacing unrelated latent bugs in those layers). Splice the new layer
-    // directly into the already-parsed L_ registries and ask the map to
-    // render only it. Register under both uuid AND name keys because
-    // different code paths (e.g. LayerCapturer.captureVector) look up by name.
+    // directly into the already-parsed L_ registries — nested under the
+    // shared "Workflows" header group — and ask the map to render only it.
     ;(async () => {
         try {
             if (L_.layers.data[uuid]) {
@@ -594,19 +627,37 @@ function addLayerForJob(jobId, job) {
                 Workflows.renderJobs()
                 return
             }
+            const group = ensureWorkflowsGroup()
+            group.sublayers.unshift(layerObj)
             L_.layers.data[uuid] = layerObj
-            L_.layers.data[layerObj.name] = layerObj
             L_.layers.nameToUUID = L_.layers.nameToUUID || {}
-            L_.layers.nameToUUID[layerObj.name] = [uuid]
+            L_.layers.nameToUUID[layerObj.display_name] =
+                L_.layers.nameToUUID[layerObj.display_name] || []
+            L_.layers.nameToUUID[layerObj.display_name].push(uuid)
             L_._layersOrdered = L_._layersOrdered || []
             L_._layersOrdered.unshift(uuid)
             L_.layers.dataFlat = L_.layers.dataFlat || []
             L_.layers.dataFlat.unshift(layerObj)
             L_.layers.on = L_.layers.on || {}
-            L_.layers.on[layerObj.name] = true
-            L_.configData.layers = L_.configData.layers || []
-            L_.configData.layers.push(layerObj)
+            L_.layers.on[uuid] = true
+            L_.layers.opacity = L_.layers.opacity || {}
+            L_.layers.opacity[uuid] = 1
+            L_._layersParent = L_._layersParent || {}
+            L_._layersParent[uuid] = GROUP_UUID
             await L_.Map_.makeLayer(layerObj, true)
+            // Refresh the Layers panel if it happens to be showing.
+            const layersTool = ToolController_.getTool
+                ? ToolController_.getTool('LayersTool')
+                : null
+            if (
+                ToolController_.activeToolName === 'LayersTool' &&
+                layersTool &&
+                layersTool.destroy &&
+                layersTool.make
+            ) {
+                layersTool.destroy()
+                layersTool.make()
+            }
             job.layerAdded = true
             Workflows.renderJobs()
         } catch (err) {
@@ -1135,8 +1186,7 @@ function buildExpandedSection(job, jobId) {
     // STAC item (or best other loadable output) as a layer.
     if (Array.isArray(job.output_uris) && job.output_uris.length > 0) {
         const statusClass = normalizeStatus(job.status)
-        const layerName = `Workflow ${jobId}`
-        const visible = L_.layers.on[layerName] === true
+        const visible = L_.layers.on[`workflow-${jobId}`] === true
         $exp.append(
             `<div class="wf-exp-label">Outputs (${job.output_uris.length})</div>`
         )
