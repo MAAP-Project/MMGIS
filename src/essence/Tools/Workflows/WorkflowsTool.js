@@ -1353,6 +1353,13 @@ function formatLocale(iso) {
 function buildExpandedSection(job, jobId) {
     const $exp = $('<div class="wf-job-expanded"></div>')
 
+    // Workflow uuid — hidden on named tiles' headers, so surface it here.
+    $exp.append(
+        `<div class="wf-exp-uuid" title="Workflow id">${escapeHTML(
+            jobId
+        )}</div>`
+    )
+
     // Name — editable. Locally-stored (the API has no concept of job names).
     $exp.append('<div class="wf-exp-label">Name</div>')
     const $nameRow = $('<div class="wf-exp-name-row"></div>')

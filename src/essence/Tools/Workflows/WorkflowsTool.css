@@ -317,6 +317,14 @@
     background: rgba(255, 255, 255, 0.02);
 }
 
+#workflowsTool .wf-exp-uuid {
+    font-family: monospace;
+    font-size: 10px;
+    color: #778;
+    word-break: break-all;
+    margin-bottom: 4px;
+}
+
 #workflowsTool .wf-exp-label {
     font-size: 10px;
     text-transform: uppercase;
