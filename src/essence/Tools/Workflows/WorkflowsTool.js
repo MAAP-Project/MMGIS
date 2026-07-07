@@ -1071,6 +1071,10 @@ const Workflows = {
             )
             return
         }
+        // Keep the reference so we can close the popup ourselves once
+        // auth-status confirms sign-in — the API redirects it to /api/docs
+        // and never closes it.
+        Workflows._authPopup = popup
         Workflows.startAuthPoll()
     },
 
@@ -1087,6 +1091,12 @@ const Workflows = {
                 if (!ok) return
                 clearInterval(Workflows.authPollTimer)
                 Workflows.authPollTimer = null
+                if (Workflows._authPopup) {
+                    try {
+                        Workflows._authPopup.close()
+                    } catch (e) {}
+                    Workflows._authPopup = null
+                }
                 if (typeof Workflows.onAuthReady === 'function')
                     Workflows.onAuthReady()
             })
@@ -1793,21 +1803,22 @@ function interfaceWithMMGIS() {
 
     function renderUnauthenticated() {
         $authBanner.empty()
-        $authBanner.append(
+        const $row = $(
             `<div class="wf-auth-msg">Not signed in to ${escapeHTML(
                 Workflows.baseUrl
-            )}.</div>`
+            )}. <a class="wf-signout wf-connect-link" href="#">connect</a></div>`
         )
-        const $btn = $('<button class="wf-connect-btn">Connect</button>')
-        $btn.on('click', function () {
-            $btn.attr('disabled', true).text('Waiting for sign-in…')
+        $row.find('.wf-connect-link').on('click', function (e) {
+            e.preventDefault()
+            const $link = $(this)
+            $link.text('waiting for sign-in…')
             Workflows.onAuthReady = function () {
                 Workflows.onAuthReady = null
                 renderAuthenticated()
             }
             Workflows.connect()
         })
-        $authBanner.append($btn)
+        $authBanner.append($row)
         $submit.text('Sign in to continue').attr('disabled', true)
     }
 
