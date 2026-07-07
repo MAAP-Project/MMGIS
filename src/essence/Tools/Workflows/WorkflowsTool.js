@@ -627,6 +627,9 @@ function buildLayerObjForJob(jobId, uri, job) {
             url: `stac-collection:${stac.collection}`,
             tileformat: 'wmts',
             minZoom: 0,
+            // The config validator requires all three zoom fields on tile
+            // layers (no defaults are filled for them).
+            maxNativeZoom: 20,
             maxZoom: 20,
             style: {},
         }
@@ -672,7 +675,7 @@ async function persistLayerToMission(layerObj) {
     })
     if (r.status === 'success') return true
     if (!/not found/i.test(String(r.message || ''))) {
-        console.warn('[WorkflowsTool] persist failed:', r.message)
+        console.warn('[WorkflowsTool] persist failed:', r.message, r.errors || r.badUUIDs || '')
         return false
     }
     r = await post({
@@ -688,7 +691,7 @@ async function persistLayerToMission(layerObj) {
         placement: { index: 0 },
     })
     if (r.status === 'success') return true
-    console.warn('[WorkflowsTool] persist failed:', r.message)
+    console.warn('[WorkflowsTool] persist failed:', r.message, r.errors || r.badUUIDs || '')
     return false
 }
 
