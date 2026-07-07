@@ -57,10 +57,36 @@ var colorFilterExtension = {
                         ? this.options.currentCogMax
                         : this.options.cogMax
                 }]`
-                if (this.options.cogColormap != null) {
+                // A named TiTiler colormap. Superseded by a custom GDAL color
+                // table (cogColormapJson) when one is provided.
+                if (
+                    this.options.cogColormap != null &&
+                    this.options.cogColormapJson == null
+                ) {
                     url += `${
                         url.indexOf('?') === -1 ? '?' : '&'
                     }colormap_name=${this.options.cogColormap}`
+                }
+            }
+
+            // A custom GDAL color table passed straight through to TiTiler's
+            // `colormap` parameter. Accepts either a discrete value->RGBA map
+            // (e.g. {"0":[0,0,0,255]}) or a list of [[min,max],RGBA] intervals.
+            // Applies with or without a rescale so classified rasters can be
+            // colored by raw pixel value.
+            if (this.options.cogColormapJson != null) {
+                let colormap = this.options.cogColormapJson
+                if (typeof colormap !== 'string') {
+                    try {
+                        colormap = JSON.stringify(colormap)
+                    } catch (e) {
+                        colormap = null
+                    }
+                }
+                if (colormap != null && colormap !== '') {
+                    url += `${
+                        url.indexOf('?') === -1 ? '?' : '&'
+                    }colormap=${encodeURIComponent(colormap)}`
                 }
             }
 

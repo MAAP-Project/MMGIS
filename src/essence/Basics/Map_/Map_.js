@@ -1274,6 +1274,7 @@ async function makeTileLayer(layerObj) {
         cogMax: layerObj.cogMax,
         currentCogMax: layerObj.currentCogMax,
         cogColormap: layerObj.cogColormap,
+        cogColormapJson: layerObj.cogColormapJson,
         variables: layerObj.variables || {},
     })
 

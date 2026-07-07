@@ -395,6 +395,49 @@ var LayersTool = {
         }
         return { reverse, colormap }
     },
+    // Renders a custom GDAL color table (the same JSON sent to TiTiler's
+    // `colormap` param) as a horizontal swatch strip for the layer legend.
+    // Accepts a discrete value->RGBA map or a list of [[min,max],RGBA]
+    // intervals. Returns null if there's no usable color table.
+    cogColormapJsonToSwatches: function (cogColormapJson) {
+        if (cogColormapJson == null) return null
+        let table = cogColormapJson
+        if (typeof table === 'string') {
+            try {
+                table = JSON.parse(table)
+            } catch (e) {
+                return null
+            }
+        }
+
+        let colors = []
+        if (Array.isArray(table)) {
+            // Intervals: [[[min, max], [r, g, b, a]], ...]
+            colors = table
+                .map((entry) => (Array.isArray(entry) ? entry[1] : null))
+                .filter((c) => Array.isArray(c))
+        } else if (typeof table === 'object') {
+            // Discrete: { "value": [r, g, b, a], ... }
+            colors = Object.keys(table)
+                .sort((a, b) => parseFloat(a) - parseFloat(b))
+                .map((k) => table[k])
+                .filter((c) => Array.isArray(c))
+        }
+        if (colors.length === 0) return null
+
+        const swatches = colors.map((c) => {
+            const a = c[3] != null ? c[3] / 255 : 1
+            return `<div style="background: rgba(${c[0] || 0},${c[1] || 0},${
+                c[2] || 0
+            },${a}); height: 100%; margin: 0px; flex-grow: 1;"></div>`
+        })
+
+        return [
+            '<div id="titlerCogColormapCSS">',
+            swatches.join('\n'),
+            '</div>',
+        ].join('\n')
+    },
 }
 
 //
@@ -684,7 +727,15 @@ function interfaceWithMMGIS(fromInit) {
                                 node[i].cogColormap
                             )
 
-                        if (window.mmgisglobal.WITH_TITILER === 'true') {
+                        const cogColortableSwatches =
+                            LayersTool.cogColormapJsonToSwatches(
+                                node[i].cogColormapJson
+                            )
+
+                        if (cogColortableSwatches != null) {
+                            // A custom GDAL color table supersedes the named colormap
+                            additionalSettings = cogColortableSwatches
+                        } else if (window.mmgisglobal.WITH_TITILER === 'true') {
                             // prettier-ignore
                             additionalSettings = [
                                 `<img id="titlerCogColormapImage_${node[i].name}" src="${window.location.origin}${(
@@ -957,7 +1008,15 @@ function interfaceWithMMGIS(fromInit) {
                                 node[i].cogColormap
                             )
 
-                        if (window.mmgisglobal.WITH_TITILER === 'true') {
+                        const cogColortableSwatches =
+                            LayersTool.cogColormapJsonToSwatches(
+                                node[i].cogColormapJson
+                            )
+
+                        if (cogColortableSwatches != null) {
+                            // A custom GDAL color table supersedes the named colormap
+                            additionalSettings = cogColortableSwatches
+                        } else if (window.mmgisglobal.WITH_TITILER === 'true') {
                             // prettier-ignore
                             additionalSettings = [
                                 `<img id="titlerCogColormapImage_${node[i].name}" src="${window.location.origin}${(

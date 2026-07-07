@@ -231,6 +231,17 @@
           ]
         },
         {
+          "components": [
+            {
+              "field": "cogColormapJson",
+              "name": "Custom Color Table (GDAL)",
+              "description": "A custom GDAL color table sent to TiTiler's 'colormap' parameter. Provide JSON as either a discrete value-to-RGBA map (e.g. {\"0\":[0,0,0,255],\"255\":[255,255,255,255]}) or a list of interval-to-RGBA entries (e.g. [[[0,100],[0,0,0,255]],[[100,200],[255,255,255,255]]]). Works with or without a rescale. When set, this supersedes the named Colormap above.",
+              "type": "textnotrim",
+              "width": 12
+            }
+          ]
+        },
+        {
           "name": "Digital Elevation Model (DEM) Tiles",
           "components": [
             {
