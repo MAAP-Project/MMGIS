@@ -465,6 +465,17 @@
     cursor: not-allowed;
 }
 
+#workflowsTool .wf-map-btn.wf-layer-remove {
+    background: transparent;
+    color: #ef5350;
+    border: 1px solid #5c3a3a;
+}
+
+#workflowsTool .wf-map-btn.wf-layer-remove:hover {
+    background: rgba(239, 83, 80, 0.08);
+    filter: none;
+}
+
 /* Visibility control — mirrors the Layers panel's filled checkbox look
    (#layersTool .checkbox/.checkbox.on are panel-scoped, so restated here). */
 #workflowsTool .wf-layer-visibility {

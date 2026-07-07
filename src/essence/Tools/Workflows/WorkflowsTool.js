@@ -710,6 +710,85 @@ async function persistLayerToMission(layerObj) {
     return false
 }
 
+// Remove a run's layer everywhere: off the map, out of the L_ registries and
+// the "Workflow Outputs" group, and (best-effort) out of the stored mission
+// configuration.
+async function removeLayerForJob(jobId, job) {
+    const layerObj = L_.layers.data[jobId]
+    if (layerObj) {
+        try {
+            // Detach from the map first if currently visible.
+            if (L_.layers.on[jobId] === true) {
+                await L_.toggleLayer(layerObj, true)
+            }
+        } catch (err) {
+            console.warn('[WorkflowsTool] layer detach failed', err)
+        }
+        delete L_.layers.layer[jobId]
+        delete L_.layers.data[jobId]
+        delete L_.layers.on[jobId]
+        delete L_.layers.opacity[jobId]
+        if (L_.layers.attachments) delete L_.layers.attachments[jobId]
+        if (L_._layersParent) delete L_._layersParent[jobId]
+        const oi = (L_._layersOrdered || []).indexOf(jobId)
+        if (oi !== -1) L_._layersOrdered.splice(oi, 1)
+        const fi = (L_.layers.dataFlat || []).findIndex(
+            (l) => l && l.uuid === jobId
+        )
+        if (fi !== -1) L_.layers.dataFlat.splice(fi, 1)
+        const dn = layerObj.display_name
+        if (dn && L_.layers.nameToUUID && L_.layers.nameToUUID[dn]) {
+            const ni = L_.layers.nameToUUID[dn].indexOf(jobId)
+            if (ni !== -1) L_.layers.nameToUUID[dn].splice(ni, 1)
+            if (L_.layers.nameToUUID[dn].length === 0)
+                delete L_.layers.nameToUUID[dn]
+        }
+        // The group header object is shared with configData, so splicing its
+        // sublayers updates the config tree too.
+        const group = L_.layers.data[GROUP_UUID]
+        if (group && Array.isArray(group.sublayers)) {
+            const si = group.sublayers.findIndex(
+                (l) => l && l.uuid === jobId
+            )
+            if (si !== -1) group.sublayers.splice(si, 1)
+        }
+        const layersTool = ToolController_.getTool
+            ? ToolController_.getTool('LayersTool')
+            : null
+        if (
+            ToolController_.activeToolName === 'LayersTool' &&
+            layersTool &&
+            layersTool.destroy &&
+            layersTool.make
+        ) {
+            layersTool.destroy()
+            layersTool.make()
+        }
+    }
+    job.layerAdded = false
+    job.persisted = undefined
+    Workflows.renderJobs()
+    // Best-effort removal from the stored mission config; "not found" just
+    // means it was session-only.
+    mmgisFetch('api/configure/removeLayer', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mission: L_.mission, layerUUID: jobId }),
+    })
+        .then((r) => r.json())
+        .then((r) => {
+            if (
+                r.status !== 'success' &&
+                !/not found|unable/i.test(String(r.message || ''))
+            )
+                console.warn(
+                    '[WorkflowsTool] layer config removal:',
+                    r.message
+                )
+        })
+        .catch(() => {})
+}
+
 // Keep an added layer's label (and provenance description) in sync when the
 // user renames the run — in-memory, in the Layers panel, and in the stored
 // mission config when the layer was persisted there.
@@ -1448,6 +1527,13 @@ function buildExpandedSection(job, jobId) {
                     `</div>`
             )
             $exp.append($row)
+            if (added) {
+                $exp.append(
+                    `<button type="button" class="wf-map-btn wf-layer-remove" data-job-id="${escapeHTML(
+                        jobId
+                    )}">Remove layer</button>`
+                )
+            }
             if (job.persisted === 'pending') {
                 $exp.append(
                     '<div class="wf-exp-hint">Saving to mission configuration…</div>'
@@ -1655,6 +1741,23 @@ function interfaceWithMMGIS() {
         if (!job || !job.autoAddableUri || job.layerAdded) return
         $(this).text('Adding…').attr('disabled', true)
         addLayerForJob(id, job)
+    })
+
+    // Remove a run's layer (map + registries + stored config). Delegated.
+    $root.find('.wf-jobs-list').on('click', '.wf-layer-remove', function (e) {
+        e.preventDefault()
+        e.stopPropagation()
+        const id = $(this).attr('data-job-id')
+        if (!id) return
+        const job = Workflows.jobs[id]
+        if (!job) return
+        if (
+            !window.confirm(
+                'Remove this layer from the map and the mission configuration?'
+            )
+        )
+            return
+        removeLayerForJob(id, job)
     })
 
     // Toggle layer visibility for a completed job's output. Delegated.
