@@ -218,6 +218,21 @@
     margin-bottom: 4px;
 }
 
+#workflowsTool .wf-name-input.wf-input-error {
+    border-color: #ef5350;
+}
+
+#workflowsTool .wf-name-warning {
+    display: none;
+    color: #ef5350;
+    font-size: 10px;
+    margin: -2px 0 4px 0;
+}
+
+#workflowsTool .wf-name-warning.visible {
+    display: block;
+}
+
 #workflowsTool .wf-exp-name-row {
     display: flex;
     gap: 6px;

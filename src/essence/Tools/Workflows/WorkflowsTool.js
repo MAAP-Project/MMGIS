@@ -288,6 +288,21 @@ function isTerminal(status) {
     return s === 'completed' || s === 'failed' || s === 'cancelled'
 }
 
+// Human-friendly label for a job's endpoint/template id. Locally-submitted
+// jobs carry an ENDPOINTS path we can match exactly; server-only jobs carry
+// a template_id like "flood_population_impact_v1" that we prettify.
+function endpointLabel(endpoint) {
+    if (!endpoint) return ''
+    const known = ENDPOINTS.find((e) => e.path === endpoint)
+    if (known) return known.label
+    return endpoint
+        .replace(/^\/api\//, '')
+        .replace(/_v\d+$/i, '')
+        .replace(/[/_]+/g, ' ')
+        .trim()
+        .replace(/\b\w/g, (c) => c.toUpperCase())
+}
+
 // TEMPORARY: see comment on the ENDPOINTS const above.
 function isFilePathValue(v) {
     return typeof v === 'string' && v.startsWith('file://')
@@ -1178,9 +1193,12 @@ const Workflows = {
             const statusClass = normalizeStatus(job.status) || 'loading'
             const isExpanded = Workflows.expandedIds.has(id)
             const $div = $('<div class="wf-job"></div>')
+            // Named runs show just the name (uuid available via tooltip and
+            // the expanded drawer); unnamed runs fall back to the uuid.
             const primary = job.name
-                ? `<span class="wf-job-name">${escapeHTML(job.name)}</span> ` +
-                  `<span class="wf-job-id-mini">${escapeHTML(id)}</span>`
+                ? `<span class="wf-job-name" title="${escapeHTML(
+                      id
+                  )}">${escapeHTML(job.name)}</span>`
                 : `<span class="wf-job-id">${escapeHTML(id)}</span>`
             // Inline visibility checkbox on the tile itself once the layer
             // exists — no need to open the drawer just to toggle. The
@@ -1207,7 +1225,9 @@ const Workflows = {
             $div.append($header)
             if (job.endpoint) {
                 $div.append(
-                    `<div class="wf-job-output">${escapeHTML(job.endpoint)}</div>`
+                    `<div class="wf-job-output" title="${escapeHTML(
+                        job.endpoint
+                    )}">${escapeHTML(endpointLabel(job.endpoint))}</div>`
                 )
             }
             if (job.payload && Object.keys(job.payload).length > 0) {
@@ -1555,6 +1575,14 @@ function interfaceWithMMGIS() {
         '<input type="text" id="wf-submit-name" class="wf-name-input" placeholder="e.g. SF Sept-15 forecast (required)" />'
     )
     $root.append($nameInput)
+    const $nameWarning = $(
+        '<div class="wf-name-warning">Please name this run before submitting.</div>'
+    )
+    $root.append($nameWarning)
+    $nameInput.on('input', function () {
+        $nameInput.removeClass('wf-input-error')
+        $nameWarning.removeClass('visible')
+    })
 
     $root.append('<div class="wf-section-label">Parameters</div>')
     const $form = $('<div id="wf-form"></div>')
@@ -1702,8 +1730,8 @@ function interfaceWithMMGIS() {
         if (!Workflows.selectedEndpointPath) return
         const name = $nameInput.val().trim()
         if (!name) {
-            window.alert('Please name this run before submitting.')
-            $nameInput.trigger('focus')
+            $nameInput.addClass('wf-input-error').trigger('focus')
+            $nameWarning.addClass('visible')
             return
         }
         const payload = collectPayload()
