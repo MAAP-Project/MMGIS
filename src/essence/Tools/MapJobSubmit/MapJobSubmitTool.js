@@ -457,7 +457,7 @@ function trimSlash(u) {
 function buildForm($parent, fields) {
     $parent.empty()
     if (!fields || fields.length === 0) {
-        $parent.append('<div class="wf-empty">No parameters.</div>')
+        $parent.append('<div class="mjs-empty">No parameters.</div>')
         return () => ({})
     }
     const inputs = []
@@ -472,14 +472,14 @@ function buildForm($parent, fields) {
         const id = `wf-field-${f.name.replace(/[^A-Za-z0-9_-]/g, '_')}`
         const initial = f.default
         const initialStr = initial != null ? String(initial) : ''
-        const $field = $('<div class="wf-field"></div>')
+        const $field = $('<div class="mjs-field"></div>')
         const lockedSuffix = f.readOnly
-            ? ' <span class="wf-field-locked">read-only</span>'
+            ? ' <span class="mjs-field-locked">read-only</span>'
             : ''
         $field.append(
-            `<div class="wf-field-label"><label for="${id}">${escapeHTML(
+            `<div class="mjs-field-label"><label for="${id}">${escapeHTML(
                 f.name
-            )}</label><span class="wf-field-type">${escapeHTML(
+            )}</label><span class="mjs-field-type">${escapeHTML(
                 f.type || ''
             )}${lockedSuffix}</span></div>`
         )
@@ -504,12 +504,12 @@ function buildForm($parent, fields) {
                 .val(initialStr)
         }
         if (f.readOnly) {
-            $input.prop('disabled', true).addClass('wf-input-readonly')
+            $input.prop('disabled', true).addClass('mjs-input-readonly')
         }
         $field.append($input)
         if (f.description) {
             $field.append(
-                `<div class="wf-field-description">${escapeHTML(
+                `<div class="mjs-field-description">${escapeHTML(
                     f.description
                 )}</div>`
             )
@@ -520,7 +520,7 @@ function buildForm($parent, fields) {
     })
     if (visibleCount === 0) {
         $parent.append(
-            '<div class="wf-empty">All parameters hidden; defaults will be sent.</div>'
+            '<div class="mjs-empty">All parameters hidden; defaults will be sent.</div>'
         )
     }
     return function collectPayload() {
@@ -1262,7 +1262,7 @@ const Workflows = {
         const total = visibleIds.length
         if (total === 0) {
             $list.append(
-                `<div class="wf-empty">${
+                `<div class="mjs-empty">${
                     Workflows.filterText
                         ? 'No jobs match the filter.'
                         : 'No jobs yet.'
@@ -1281,40 +1281,40 @@ const Workflows = {
             const job = Workflows.jobs[id] || { status: 'loading…', endpoint: '' }
             const statusClass = normalizeStatus(job.status) || 'loading'
             const isExpanded = Workflows.expandedIds.has(id)
-            const $div = $('<div class="wf-job"></div>')
+            const $div = $('<div class="mjs-job"></div>')
             // Named runs show just the name (uuid available via tooltip and
             // the expanded drawer); unnamed runs fall back to the uuid.
             const primary = job.name
-                ? `<span class="wf-job-name" title="${escapeHTML(
+                ? `<span class="mjs-job-name" title="${escapeHTML(
                       id
                   )}">${escapeHTML(job.name)}</span>`
-                : `<span class="wf-job-id">${escapeHTML(id)}</span>`
+                : `<span class="mjs-job-id">${escapeHTML(id)}</span>`
             // Inline visibility checkbox on the tile itself once the layer
             // exists — no need to open the drawer just to toggle. The
             // wf-layer-toggle handler stops propagation, so clicking it
             // doesn't expand/collapse the row.
             const layerExists = L_.layers.data[id] != null
             const tileVisibility = layerExists
-                ? `<div class="wf-tile-visibility wf-layer-toggle" data-job-id="${escapeHTML(
+                ? `<div class="mjs-tile-visibility wf-layer-toggle" data-job-id="${escapeHTML(
                       id
                   )}" title="Toggle layer visibility">` +
-                  `<div class="wf-checkbox${
+                  `<div class="mjs-checkbox${
                       L_.layers.on[id] === true ? ' on' : ''
                   }"></div>` +
                   `</div>`
                 : ''
             const $header = $(
-                `<div class="wf-job-header" data-job-id="${escapeHTML(id)}">` +
-                    `<span class="wf-job-chevron">${isExpanded ? '▼' : '▶'}</span> ` +
+                `<div class="mjs-job-header" data-job-id="${escapeHTML(id)}">` +
+                    `<span class="mjs-job-chevron">${isExpanded ? '▼' : '▶'}</span> ` +
                     primary + ' ' +
-                    `<span class="wf-job-status ${escapeHTML(statusClass)}">${escapeHTML(job.status)}</span>` +
+                    `<span class="mjs-job-status ${escapeHTML(statusClass)}">${escapeHTML(job.status)}</span>` +
                     tileVisibility +
                     `</div>`
             )
             $div.append($header)
             if (job.endpoint) {
                 $div.append(
-                    `<div class="wf-job-output" title="${escapeHTML(
+                    `<div class="mjs-job-output" title="${escapeHTML(
                         job.endpoint
                     )}">${escapeHTML(endpointLabel(job.endpoint))}</div>`
                 )
@@ -1328,20 +1328,20 @@ const Workflows = {
                 if (displayEntries.length > 0) {
                     const paramsOpen = Workflows.paramsExpandedIds.has(id)
                     $div.append(
-                        `<div class="wf-params-toggle" data-job-id="${escapeHTML(
+                        `<div class="mjs-params-toggle" data-job-id="${escapeHTML(
                             id
                         )}">${paramsOpen ? '▼' : '▶'} parameters (${
                             displayEntries.length
                         })</div>`
                     )
                     if (paramsOpen) {
-                        const $params = $('<div class="wf-job-params"></div>')
+                        const $params = $('<div class="mjs-job-params"></div>')
                         displayEntries.forEach(([k, v]) => {
                             $params.append(
-                                `<span class="wf-param-key">${escapeHTML(k)}</span>`
+                                `<span class="mjs-param-key">${escapeHTML(k)}</span>`
                             )
                             $params.append(
-                                `<span class="wf-param-val" title="${escapeHTML(
+                                `<span class="mjs-param-val" title="${escapeHTML(
                                     String(v == null ? '' : v)
                                 )}">${escapeHTML(formatParamValue(v))}</span>`
                             )
@@ -1352,14 +1352,14 @@ const Workflows = {
             }
             if (statusClass === 'running' && job.currentStage) {
                 $div.append(
-                    `<div class="wf-job-stage">stage: ${escapeHTML(
+                    `<div class="mjs-job-stage">stage: ${escapeHTML(
                         job.currentStage
                     )}</div>`
                 )
             }
             if (statusClass === 'failed' && job.error) {
                 $div.append(
-                    `<div class="wf-job-error">${escapeHTML(job.error)}</div>`
+                    `<div class="mjs-job-error">${escapeHTML(job.error)}</div>`
                 )
             }
             if (isExpanded) {
@@ -1440,25 +1440,25 @@ function formatLocale(iso) {
 }
 
 function buildExpandedSection(job, jobId) {
-    const $exp = $('<div class="wf-job-expanded"></div>')
+    const $exp = $('<div class="mjs-job-expanded"></div>')
 
     // Workflow uuid — hidden on named tiles' headers, so surface it here.
     $exp.append(
-        `<div class="wf-exp-uuid" title="Workflow id">${escapeHTML(
+        `<div class="mjs-exp-uuid" title="Workflow id">${escapeHTML(
             jobId
         )}</div>`
     )
 
     // Name — editable. Locally-stored (the API has no concept of job names).
-    $exp.append('<div class="wf-exp-label">Name</div>')
-    const $nameRow = $('<div class="wf-exp-name-row"></div>')
+    $exp.append('<div class="mjs-exp-label">Name</div>')
+    const $nameRow = $('<div class="mjs-exp-name-row"></div>')
     const $nameInput = $(
-        `<input type="text" class="wf-exp-name-input" placeholder="e.g. SF Sept-15 forecast" value="${escapeHTML(
+        `<input type="text" class="mjs-exp-name-input" placeholder="e.g. SF Sept-15 forecast" value="${escapeHTML(
             job.name || ''
         )}" />`
     )
     const $nameSave = $(
-        '<button type="button" class="wf-exp-name-save">Save</button>'
+        '<button type="button" class="mjs-exp-name-save">Save</button>'
     )
     $nameSave.on('click', function () {
         const newName = $nameInput.val().trim()
@@ -1485,14 +1485,14 @@ function buildExpandedSection(job, jobId) {
             )
         )
         if (Object.keys(display).length > 0) {
-            $exp.append('<div class="wf-exp-label">Submitted parameters</div>')
-            const $pre = $('<pre class="wf-exp-json"></pre>')
+            $exp.append('<div class="mjs-exp-label">Submitted parameters</div>')
+            const $pre = $('<pre class="mjs-exp-json"></pre>')
             $pre.text(JSON.stringify(display, null, 2))
             $exp.append($pre)
         }
     } else if (job.fromServer) {
         $exp.append(
-            '<div class="wf-exp-hint">No submitted parameters on record (job was likely submitted from elsewhere or before this browser stored them).</div>'
+            '<div class="mjs-exp-hint">No submitted parameters on record (job was likely submitted from elsewhere or before this browser stored them).</div>'
         )
     }
 
@@ -1511,9 +1511,9 @@ function buildExpandedSection(job, jobId) {
                 L_.layers.data[jobId] != null
             // Two explicit controls: "Add layer" (one-time) and a visibility
             // toggle that's only live once the layer exists on the map.
-            const $row = $('<div class="wf-map-btn-row"></div>')
+            const $row = $('<div class="mjs-map-btn-row"></div>')
             $row.append(
-                `<button type="button" class="wf-map-btn wf-layer-add" data-job-id="${escapeHTML(
+                `<button type="button" class="mjs-map-btn wf-layer-add" data-job-id="${escapeHTML(
                     jobId
                 )}"${added ? ' disabled' : ''}>${
                     added ? 'Layer added' : 'Add layer'
@@ -1523,14 +1523,14 @@ function buildExpandedSection(job, jobId) {
             // checkbox. The wf-layer-toggle handler no-ops until the layer
             // actually exists on the map.
             $row.append(
-                `<div class="wf-layer-visibility wf-layer-toggle${
+                `<div class="mjs-layer-visibility wf-layer-toggle${
                     added ? '' : ' disabled'
                 }" data-job-id="${escapeHTML(jobId)}" title="${
                     added
                         ? 'Toggle layer visibility'
                         : 'Add the layer first'
                 }">` +
-                    `<div class="wf-checkbox${
+                    `<div class="mjs-checkbox${
                         added && visible ? ' on' : ''
                     }"></div>` +
                     `<span>Visible</span>` +
@@ -1539,26 +1539,26 @@ function buildExpandedSection(job, jobId) {
             $exp.append($row)
             if (added) {
                 $exp.append(
-                    `<button type="button" class="wf-map-btn wf-layer-remove" data-job-id="${escapeHTML(
+                    `<button type="button" class="mjs-map-btn wf-layer-remove" data-job-id="${escapeHTML(
                         jobId
                     )}">Remove layer</button>`
                 )
             }
             if (job.persisted === 'pending') {
                 $exp.append(
-                    '<div class="wf-exp-hint">Saving to mission configuration…</div>'
+                    '<div class="mjs-exp-hint">Saving to mission configuration…</div>'
                 )
             } else if (job.persisted === true) {
                 $exp.append(
-                    '<div class="wf-exp-hint">Saved to mission configuration — persists across reloads.</div>'
+                    '<div class="mjs-exp-hint">Saved to mission configuration — persists across reloads.</div>'
                 )
             } else if (job.persisted === false) {
                 $exp.append(
-                    '<div class="wf-exp-hint">Added for this session only — could not save to the mission configuration (this needs mission-edit permission).</div>'
+                    '<div class="mjs-exp-hint">Added for this session only — could not save to the mission configuration (this needs mission-edit permission).</div>'
                 )
             } else if (added && !job.layerAdded) {
                 $exp.append(
-                    '<div class="wf-exp-hint">Layer is saved in the mission configuration.</div>'
+                    '<div class="mjs-exp-hint">Layer is saved in the mission configuration.</div>'
                 )
             }
         }
@@ -1568,34 +1568,34 @@ function buildExpandedSection(job, jobId) {
     const body = job.body
     if (body) {
         if (body.created_at || body.updated_at) {
-            $exp.append('<div class="wf-exp-label">Timing</div>')
+            $exp.append('<div class="mjs-exp-label">Timing</div>')
             const lines = []
             if (body.created_at)
                 lines.push(`created: ${formatLocale(body.created_at)}`)
             if (body.updated_at)
                 lines.push(`updated: ${formatLocale(body.updated_at)}`)
             $exp.append(
-                `<div class="wf-exp-hint">${escapeHTML(lines.join(' · '))}</div>`
+                `<div class="mjs-exp-hint">${escapeHTML(lines.join(' · '))}</div>`
             )
         }
         if (Array.isArray(body.stages) && body.stages.length > 0) {
-            $exp.append('<div class="wf-exp-label">Stages</div>')
-            const $stages = $('<div class="wf-exp-stages"></div>')
+            $exp.append('<div class="mjs-exp-label">Stages</div>')
+            const $stages = $('<div class="mjs-exp-stages"></div>')
             body.stages.forEach((s, i) => {
                 const sclass = normalizeStatus(s && s.status) || 'unknown'
                 const isCurrent = i === body.current_stage_index
                 const $row = $(
-                    `<div class="wf-exp-stage ${escapeHTML(sclass)}${
+                    `<div class="mjs-exp-stage ${escapeHTML(sclass)}${
                         isCurrent ? ' current' : ''
                     }">` +
-                        `<span class="wf-exp-stage-status">${escapeHTML(
+                        `<span class="mjs-exp-stage-status">${escapeHTML(
                             s.status || ''
                         )}</span> ` +
-                        `<span class="wf-exp-stage-name">${escapeHTML(
+                        `<span class="mjs-exp-stage-name">${escapeHTML(
                             s.name || ''
                         )}</span>` +
                         (s.subsystem
-                            ? ` <span class="wf-exp-stage-sub">[${escapeHTML(
+                            ? ` <span class="mjs-exp-stage-sub">[${escapeHTML(
                                   s.subsystem
                               )}]</span>`
                             : '') +
@@ -1603,7 +1603,7 @@ function buildExpandedSection(job, jobId) {
                 )
                 if (s.error_message) {
                     $row.append(
-                        `<div class="wf-exp-stage-error">${escapeHTML(
+                        `<div class="mjs-exp-stage-error">${escapeHTML(
                             s.error_message
                         )}</div>`
                     )
@@ -1623,17 +1623,17 @@ function renderPagination(page, totalPages, total) {
     $container.empty()
     if (totalPages <= 1) return
     const $prev = $(
-        '<button type="button" class="wf-page-btn wf-page-prev">Prev</button>'
+        '<button type="button" class="mjs-page-btn wf-page-prev">Prev</button>'
     )
     if (page === 0) $prev.attr('disabled', true)
     $prev.on('click', () => Workflows.goToPage(Workflows.page - 1))
     const $next = $(
-        '<button type="button" class="wf-page-btn wf-page-next">Next</button>'
+        '<button type="button" class="mjs-page-btn wf-page-next">Next</button>'
     )
     if (page >= totalPages - 1) $next.attr('disabled', true)
     $next.on('click', () => Workflows.goToPage(Workflows.page + 1))
     const $label = $(
-        `<span class="wf-page-label">Page ${page + 1} of ${totalPages} · ${total} jobs</span>`
+        `<span class="mjs-page-label">Page ${page + 1} of ${totalPages} · ${total} jobs</span>`
     )
     $container.append($prev).append($label).append($next)
 }
@@ -1647,13 +1647,13 @@ function interfaceWithMMGIS() {
     tools.empty()
     tools.html('<div id="mapJobSubmitTool" class="mmgisScrollbar"></div>')
     const $root = $('#mapJobSubmitTool')
-    $root.append('<div class="wf-header">Workflows</div>')
+    $root.append('<div class="mjs-header">Workflows</div>')
 
-    const $authBanner = $('<div id="wf-auth-banner"></div>')
+    const $authBanner = $('<div id="mjs-auth-banner"></div>')
     $root.append($authBanner)
 
-    $root.append('<div class="wf-section-label">Endpoint</div>')
-    const $endpointSelect = $('<select id="wf-endpoint-select"></select>')
+    $root.append('<div class="mjs-section-label">Endpoint</div>')
+    const $endpointSelect = $('<select id="mjs-endpoint-select"></select>')
     const byCategory = ENDPOINTS.reduce((acc, ep) => {
         const cat = ep.category || 'Other'
         ;(acc[cat] = acc[cat] || []).push(ep)
@@ -1671,31 +1671,31 @@ function interfaceWithMMGIS() {
         $endpointSelect.append($group)
     })
     $root.append($endpointSelect)
-    $root.append('<div class="wf-endpoint-desc" id="wf-endpoint-desc"></div>')
+    $root.append('<div class="mjs-endpoint-desc" id="mjs-endpoint-desc"></div>')
 
-    $root.append('<div class="wf-section-label">Run Name *</div>')
+    $root.append('<div class="mjs-section-label">Run Name *</div>')
     const $nameInput = $(
-        '<input type="text" id="wf-submit-name" class="wf-name-input" placeholder="e.g. SF Sept-15 forecast (required)" />'
+        '<input type="text" id="mjs-submit-name" class="mjs-name-input" placeholder="e.g. SF Sept-15 forecast (required)" />'
     )
     $root.append($nameInput)
     const $nameWarning = $(
-        '<div class="wf-name-warning">Please name this run before submitting.</div>'
+        '<div class="mjs-name-warning">Please name this run before submitting.</div>'
     )
     $root.append($nameWarning)
     $nameInput.on('input', function () {
-        $nameInput.removeClass('wf-input-error')
+        $nameInput.removeClass('mjs-input-error')
         $nameWarning.removeClass('visible')
     })
 
-    $root.append('<div class="wf-section-label">Parameters</div>')
-    const $form = $('<div id="wf-form"></div>')
+    $root.append('<div class="mjs-section-label">Parameters</div>')
+    const $form = $('<div id="mjs-form"></div>')
     $root.append($form)
 
-    const $submit = $('<button class="wf-submit" disabled>Loading…</button>')
+    const $submit = $('<button class="mjs-submit" disabled>Loading…</button>')
     $root.append($submit)
 
     $root.append(
-        '<div class="wf-jobs"><div class="wf-jobs-header"><div class="wf-section-label">Jobs</div><button class="wf-refresh-btn" type="button">Refresh</button></div><input type="text" class="wf-jobs-filter" placeholder="Filter by name or id…" spellcheck="false" /><div class="wf-jobs-list"></div><div class="wf-pagination"></div></div>'
+        '<div class="mjs-jobs"><div class="mjs-jobs-header"><div class="mjs-section-label">Jobs</div><button class="mjs-refresh-btn" type="button">Refresh</button></div><input type="text" class="mjs-jobs-filter" placeholder="Filter by name or id…" spellcheck="false" /><div class="mjs-jobs-list"></div><div class="mjs-pagination"></div></div>'
     )
     Workflows.renderJobs()
 
@@ -1790,7 +1790,7 @@ function interfaceWithMMGIS() {
             (e) => e.path === Workflows.selectedEndpointPath
         )
         if (!ep) return
-        $('#wf-endpoint-desc').text(ep.description || ep.label)
+        $('#mjs-endpoint-desc').text(ep.description || ep.label)
         collectPayload = buildForm($form, ep.fields)
     }
 
@@ -1804,9 +1804,9 @@ function interfaceWithMMGIS() {
     function renderUnauthenticated() {
         $authBanner.empty()
         const $row = $(
-            `<div class="wf-auth-msg">Not signed in to ${escapeHTML(
+            `<div class="mjs-auth-msg">Not signed in to ${escapeHTML(
                 Workflows.baseUrl
-            )}. <a class="wf-signout wf-connect-link" href="#">connect</a></div>`
+            )}. <a class="mjs-signout wf-connect-link" href="#">connect</a></div>`
         )
         $row.find('.wf-connect-link').on('click', function (e) {
             e.preventDefault()
@@ -1825,9 +1825,9 @@ function interfaceWithMMGIS() {
     function renderAuthenticated() {
         $authBanner.empty()
         const $row = $(
-            `<div class="wf-auth-ok">Signed in · ${escapeHTML(
+            `<div class="mjs-auth-ok">Signed in · ${escapeHTML(
                 Workflows.baseUrl
-            )} <a class="wf-signout" href="#">sign out</a></div>`
+            )} <a class="mjs-signout" href="#">sign out</a></div>`
         )
         $row.find('.wf-signout').on('click', function (e) {
             e.preventDefault()
@@ -1851,7 +1851,7 @@ function interfaceWithMMGIS() {
         if (!Workflows.selectedEndpointPath) return
         const name = $nameInput.val().trim()
         if (!name) {
-            $nameInput.addClass('wf-input-error').trigger('focus')
+            $nameInput.addClass('mjs-input-error').trigger('focus')
             $nameWarning.addClass('visible')
             return
         }
@@ -1870,11 +1870,11 @@ function interfaceWithMMGIS() {
 
     if (!Workflows.baseUrl) {
         $authBanner.append(
-            '<div class="wf-auth-msg">No API Base URL configured. Set it in the Configure page under Tools → Workflows.</div>'
+            '<div class="mjs-auth-msg">No API Base URL configured. Set it in the Configure page under Tools → Workflows.</div>'
         )
         $submit.text('Not configured').attr('disabled', true)
     } else {
-        $authBanner.append('<div class="wf-auth-msg">Checking sign-in…</div>')
+        $authBanner.append('<div class="mjs-auth-msg">Checking sign-in…</div>')
         checkAuth().then((ok) => {
             if (ok) renderAuthenticated()
             else renderUnauthenticated()
