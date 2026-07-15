@@ -1,0 +1,584 @@
+#mapJobSubmitTool {
+    color: #cfcfcf;
+    height: 100%;
+    overflow-y: auto;
+    padding: 8px 10px 24px 10px;
+    box-sizing: border-box;
+    font-family: lato-light, sans-serif;
+}
+
+#mapJobSubmitTool .wf-header {
+    height: 40px;
+    line-height: 40px;
+    font-size: 16px;
+    color: var(--color-l);
+    background: var(--color-a);
+    font-family: lato-light;
+    text-transform: uppercase;
+    padding: 0 10px;
+    margin: -8px -10px 8px -10px;
+}
+
+#mapJobSubmitTool .wf-section-label {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--color-l);
+    margin: 12px 0 4px 0;
+}
+
+#mapJobSubmitTool select,
+#mapJobSubmitTool input[type="text"],
+#mapJobSubmitTool input[type="number"],
+#mapJobSubmitTool input[type="date"],
+#mapJobSubmitTool textarea {
+    width: 100%;
+    box-sizing: border-box;
+    background: var(--color-k);
+    color: #fff;
+    border: 1px solid var(--color-i, #444);
+    padding: 4px 6px;
+    font-size: 12px;
+    font-family: inherit;
+}
+
+#mapJobSubmitTool .wf-field {
+    margin-bottom: 8px;
+}
+
+#mapJobSubmitTool .wf-field-label {
+    font-size: 11px;
+    color: #cfcfcf;
+    margin-bottom: 2px;
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+}
+
+#mapJobSubmitTool .wf-field-label .wf-field-type {
+    font-size: 10px;
+    color: #888;
+    text-transform: lowercase;
+}
+
+#mapJobSubmitTool .wf-field-description {
+    font-size: 10px;
+    color: #888;
+    margin: 2px 0 0 0;
+}
+
+#mapJobSubmitTool .wf-field-locked {
+    margin-left: 4px;
+    padding: 0 4px;
+    background: rgba(255, 255, 255, 0.08);
+    color: #888;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    border-radius: 2px;
+    font-size: 9px;
+}
+
+#mapJobSubmitTool .wf-input-readonly {
+    opacity: 0.6;
+    cursor: not-allowed;
+    background: rgba(0, 0, 0, 0.2);
+}
+
+#mapJobSubmitTool .wf-submit {
+    width: 100%;
+    background: var(--color-a);
+    color: var(--color-l);
+    border: none;
+    padding: 8px;
+    margin-top: 12px;
+    cursor: pointer;
+    text-transform: uppercase;
+    font-size: 12px;
+    letter-spacing: 0.04em;
+}
+
+#mapJobSubmitTool .wf-submit:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+#mapJobSubmitTool .wf-jobs {
+    margin-top: 16px;
+    border-top: 1px solid #333;
+    padding-top: 8px;
+}
+
+#mapJobSubmitTool .wf-jobs-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+#mapJobSubmitTool .wf-jobs-filter {
+    width: 100%;
+    box-sizing: border-box;
+    background: var(--color-k);
+    color: #fff;
+    border: 1px solid #444;
+    padding: 4px 6px;
+    font-size: 11px;
+    margin: 4px 0 6px 0;
+}
+
+#mapJobSubmitTool .wf-refresh-btn {
+    background: transparent;
+    color: #cfcfcf;
+    border: 1px solid #444;
+    padding: 2px 8px;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    cursor: pointer;
+}
+
+#mapJobSubmitTool .wf-refresh-btn:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.04);
+}
+
+#mapJobSubmitTool .wf-refresh-btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+#mapJobSubmitTool .wf-pagination {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: 6px;
+}
+
+#mapJobSubmitTool .wf-pagination:empty {
+    display: none;
+}
+
+#mapJobSubmitTool .wf-page-btn {
+    background: transparent;
+    color: #cfcfcf;
+    border: 1px solid #444;
+    padding: 2px 10px;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    cursor: pointer;
+}
+
+#mapJobSubmitTool .wf-page-btn:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.04);
+}
+
+#mapJobSubmitTool .wf-page-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+#mapJobSubmitTool .wf-page-label {
+    font-size: 10px;
+    color: #888;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+#mapJobSubmitTool .wf-job {
+    border: 1px solid #333;
+    padding: 6px 8px;
+    margin-bottom: 6px;
+    font-size: 11px;
+    background: rgba(255, 255, 255, 0.02);
+}
+
+#mapJobSubmitTool .wf-job-id {
+    font-family: monospace;
+    color: #aac;
+}
+
+#mapJobSubmitTool .wf-job-name {
+    color: #fff;
+    font-weight: bold;
+}
+
+#mapJobSubmitTool .wf-job-id-mini {
+    font-family: monospace;
+    color: #777;
+    font-size: 9px;
+}
+
+#mapJobSubmitTool .wf-name-input {
+    width: 100%;
+    box-sizing: border-box;
+    background: var(--color-k);
+    color: #fff;
+    border: 1px solid #444;
+    padding: 4px 6px;
+    font-size: 12px;
+    margin-bottom: 4px;
+}
+
+#mapJobSubmitTool .wf-name-input.wf-input-error {
+    border-color: #ef5350;
+}
+
+#mapJobSubmitTool .wf-name-warning {
+    display: none;
+    color: #ef5350;
+    font-size: 10px;
+    margin: -2px 0 4px 0;
+}
+
+#mapJobSubmitTool .wf-name-warning.visible {
+    display: block;
+}
+
+#mapJobSubmitTool .wf-exp-name-row {
+    display: flex;
+    gap: 6px;
+    margin-bottom: 6px;
+}
+
+#mapJobSubmitTool .wf-exp-name-input {
+    flex: 1;
+    background: var(--color-k);
+    color: #fff;
+    border: 1px solid #444;
+    padding: 4px 6px;
+    font-size: 11px;
+}
+
+#mapJobSubmitTool .wf-exp-name-save {
+    background: transparent;
+    color: #cfcfcf;
+    border: 1px solid #444;
+    padding: 2px 10px;
+    font-size: 10px;
+    text-transform: uppercase;
+    cursor: pointer;
+}
+
+#mapJobSubmitTool .wf-exp-name-save:hover {
+    background: rgba(255, 255, 255, 0.04);
+}
+
+#mapJobSubmitTool .wf-job-status {
+    text-transform: uppercase;
+    font-size: 10px;
+    letter-spacing: 0.05em;
+}
+
+#mapJobSubmitTool .wf-job-status.queued { color: #ccc; }
+#mapJobSubmitTool .wf-job-status.running { color: #ffb74d; }
+#mapJobSubmitTool .wf-job-status.completed { color: #66bb6a; }
+#mapJobSubmitTool .wf-job-status.failed { color: #ef5350; }
+#mapJobSubmitTool .wf-job-status.cancelled { color: #888; }
+#mapJobSubmitTool .wf-job-status.loading { color: #888; font-style: italic; }
+
+#mapJobSubmitTool .wf-job-stage {
+    margin-top: 4px;
+    font-size: 10px;
+    color: #ffb74d;
+}
+
+#mapJobSubmitTool .wf-job-error {
+    margin-top: 6px;
+    padding: 4px 6px;
+    font-size: 10px;
+    color: #ef5350;
+    word-break: break-word;
+    background: rgba(239, 83, 80, 0.06);
+    border-left: 2px solid #ef5350;
+}
+
+#mapJobSubmitTool .wf-job-header {
+    cursor: pointer;
+    user-select: none;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+#mapJobSubmitTool .wf-job-header:hover {
+    background: rgba(255, 255, 255, 0.03);
+}
+
+#mapJobSubmitTool .wf-job-chevron {
+    display: inline-block;
+    width: 10px;
+    color: #888;
+    font-size: 9px;
+}
+
+#mapJobSubmitTool .wf-job-expanded {
+    margin-top: 6px;
+    padding: 6px 8px;
+    border-left: 2px solid #444;
+    background: rgba(255, 255, 255, 0.02);
+}
+
+#mapJobSubmitTool .wf-exp-uuid {
+    font-family: monospace;
+    font-size: 10px;
+    color: #778;
+    word-break: break-all;
+    margin-bottom: 4px;
+}
+
+#mapJobSubmitTool .wf-exp-label {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: #aac;
+    margin: 6px 0 2px 0;
+}
+
+#mapJobSubmitTool .wf-exp-label:first-child {
+    margin-top: 0;
+}
+
+#mapJobSubmitTool .wf-exp-json {
+    margin: 0;
+    font-family: monospace;
+    font-size: 10px;
+    color: #cfcfcf;
+    white-space: pre-wrap;
+    word-break: break-word;
+    background: rgba(0, 0, 0, 0.25);
+    padding: 4px 6px;
+    border-radius: 2px;
+    max-height: 200px;
+    overflow: auto;
+}
+
+#mapJobSubmitTool .wf-exp-hint {
+    font-size: 10px;
+    color: #888;
+}
+
+#mapJobSubmitTool .wf-exp-stages {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+}
+
+#mapJobSubmitTool .wf-exp-stage {
+    font-size: 10px;
+    color: #cfcfcf;
+    padding: 2px 0;
+}
+
+#mapJobSubmitTool .wf-exp-stage.current {
+    background: rgba(255, 183, 77, 0.08);
+    padding: 2px 4px;
+    border-radius: 2px;
+}
+
+#mapJobSubmitTool .wf-exp-stage-status {
+    display: inline-block;
+    min-width: 70px;
+    font-weight: bold;
+    text-transform: uppercase;
+    font-size: 9px;
+}
+
+#mapJobSubmitTool .wf-exp-stage.completed .wf-exp-stage-status { color: #66bb6a; }
+#mapJobSubmitTool .wf-exp-stage.failed .wf-exp-stage-status { color: #ef5350; }
+#mapJobSubmitTool .wf-exp-stage.running .wf-exp-stage-status { color: #ffb74d; }
+#mapJobSubmitTool .wf-exp-stage.queued .wf-exp-stage-status { color: #ccc; }
+
+#mapJobSubmitTool .wf-exp-stage-sub {
+    color: #888;
+    font-size: 9px;
+}
+
+#mapJobSubmitTool .wf-exp-stage-error {
+    color: #ef5350;
+    font-size: 10px;
+    margin-left: 12px;
+    word-break: break-word;
+}
+
+#mapJobSubmitTool .wf-job-output {
+    margin-top: 4px;
+    word-break: break-all;
+    color: #aaa;
+}
+
+#mapJobSubmitTool .wf-params-toggle {
+    cursor: pointer;
+    user-select: none;
+    margin-top: 4px;
+    font-size: 10px;
+    color: #888;
+}
+
+#mapJobSubmitTool .wf-params-toggle:hover {
+    color: #ccc;
+}
+
+#mapJobSubmitTool .wf-job-params {
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    column-gap: 8px;
+    row-gap: 2px;
+    margin-top: 4px;
+    font-size: 10px;
+}
+
+#mapJobSubmitTool .wf-param-key {
+    color: #888;
+    font-family: monospace;
+}
+
+#mapJobSubmitTool .wf-param-val {
+    color: #d8d8d8;
+    font-family: monospace;
+    word-break: break-all;
+    min-width: 0;
+}
+
+#mapJobSubmitTool .wf-map-btn-row {
+    display: flex;
+    gap: 6px;
+    margin-top: 6px;
+}
+
+#mapJobSubmitTool .wf-map-btn {
+    flex: 1;
+    background: var(--color-a);
+    color: var(--color-l);
+    border: none;
+    padding: 6px;
+    cursor: pointer;
+    text-transform: uppercase;
+    font-size: 11px;
+    letter-spacing: 0.04em;
+}
+
+#mapJobSubmitTool .wf-map-btn:hover:not(:disabled) {
+    filter: brightness(1.15);
+}
+
+#mapJobSubmitTool .wf-map-btn:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
+#mapJobSubmitTool .wf-map-btn.wf-layer-remove {
+    background: transparent;
+    color: #ef5350;
+    border: 1px solid #5c3a3a;
+}
+
+#mapJobSubmitTool .wf-map-btn.wf-layer-remove:hover {
+    background: rgba(239, 83, 80, 0.08);
+    filter: none;
+}
+
+/* Visibility control — mirrors the Layers panel's filled checkbox look
+   (#layersTool .checkbox/.checkbox.on are panel-scoped, so restated here). */
+#mapJobSubmitTool .wf-layer-visibility {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 0 8px 0 2px;
+    cursor: pointer;
+    user-select: none;
+    border: 1px solid #444;
+    color: #cfcfcf;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+#mapJobSubmitTool .wf-layer-visibility.disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
+#mapJobSubmitTool .wf-checkbox {
+    margin: 5px;
+    width: 20px;
+    height: 20px;
+    border: 1px solid var(--color-a3);
+    border-radius: 2px;
+    transition: background 0.2s cubic-bezier(0.39, 0.575, 0.565, 1),
+        border 0.1s cubic-bezier(0.39, 0.575, 0.565, 1);
+}
+
+#mapJobSubmitTool .wf-checkbox.on {
+    background: var(--color-a7);
+    border: 0px solid #777;
+}
+
+#mapJobSubmitTool
+    .wf-layer-visibility:not(.disabled):hover
+    .wf-checkbox:not(.on) {
+    background: rgba(255, 255, 255, 0.08);
+}
+
+#mapJobSubmitTool .wf-tile-visibility {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    cursor: pointer;
+}
+
+#mapJobSubmitTool .wf-tile-visibility .wf-checkbox {
+    width: 14px;
+    height: 14px;
+    margin: 2px;
+}
+
+#mapJobSubmitTool .wf-tile-visibility:hover .wf-checkbox:not(.on) {
+    background: rgba(255, 255, 255, 0.08);
+}
+
+#mapJobSubmitTool .wf-endpoint-desc {
+    font-size: 11px;
+    color: #888;
+    margin-top: 2px;
+    margin-bottom: 6px;
+}
+
+#mapJobSubmitTool .wf-empty {
+    color: #888;
+    font-size: 11px;
+    font-style: italic;
+}
+
+#mapJobSubmitTool #wf-auth-banner {
+    margin-bottom: 8px;
+}
+
+#mapJobSubmitTool .wf-auth-msg {
+    font-size: 11px;
+    color: #cfcfcf;
+    background: rgba(255, 255, 255, 0.04);
+    border-left: 3px solid #888;
+    padding: 6px 8px;
+    margin-bottom: 6px;
+    word-break: break-all;
+}
+
+#mapJobSubmitTool .wf-auth-ok {
+    font-size: 11px;
+    color: #66bb6a;
+    background: rgba(102, 187, 106, 0.08);
+    border-left: 3px solid #66bb6a;
+    padding: 6px 8px;
+    margin-bottom: 6px;
+    word-break: break-all;
+}
+
+#mapJobSubmitTool .wf-signout {
+    color: #aac;
+    margin-left: 6px;
+    font-size: 10px;
+    text-decoration: underline;
+}
+
+#mapJobSubmitTool .wf-signout:hover {
+    color: #fff;
+}
