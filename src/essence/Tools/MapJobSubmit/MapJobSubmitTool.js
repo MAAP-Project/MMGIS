@@ -133,141 +133,10 @@ function migrateLegacyLocalStorageRegistry() {
     })
 }
 
-// Hardcoded from the cmss_api OpenAPI spec. When the upstream API gains or
-// changes endpoints, edit this array. Field shape:
-//   { name, type: 'string'|'number'|'boolean'|'date', default?, min?, max?,
-//     description?, hidden?, readOnly? }
-// hidden: don't render the field; always send its default in the payload.
-// readOnly: render the field disabled (so the user sees the value) and always
-// send its default in the payload.
-//
-// TEMPORARY: fields whose value is a file:// URI are also stripped from every
-// display surface (form, params summary, expanded JSON) and always sent as
-// their default. file:// values point at server-local paths that aren't
-// meaningful to the end user. Remove the isFilePathValue treatment below
-// when the API stops requiring these in the request payload, or when we
-// teach the UI to surface them helpfully.
-const ENDPOINTS = [
-    {
-        path: '/api/nfss/flood_prediction_inference',
-        label: 'Flood Prediction Inference',
-        category: 'Forecasting',
-        description: 'Enqueue flood prediction inference.',
-        fields: [
-            {
-                name: 'forecast_date',
-                type: 'date',
-                default: '2016-09-15',
-            },
-            {
-                name: 'precipitation_scale_factor',
-                type: 'string',
-                default: '1.0',
-            },
-        ],
-    },
-    {
-        path: '/api/iass/aquaculture_impact_assessment',
-        label: 'Aquaculture Impact Assessment',
-        category: 'Assessment',
-        description: 'Enqueue aquaculture impact assessment.',
-        fields: [
-            {
-                name: 'aquaculture_data_uri',
-                type: 'string',
-                default: 'file:///app/iass/data/czdt_shellfish.gpkg',
-                description:
-                    'URI of the aquaculture shape dataset (file readable by GeoPandas).',
-            },
-            {
-                name: 'geophysical_data_uri',
-                type: 'string',
-                default:
-                    'file:///app/iass/data/czdt_chesroms_ECB_HR_avg_20250806.nc',
-                description:
-                    'URI of the gridded geophysical dataset (XArray-readable).',
-            },
-            {
-                name: 'geophysical_data_variable',
-                type: 'string',
-                default: 'temp',
-            },
-            {
-                name: 'threshold',
-                type: 'number',
-                default: 90,
-                description:
-                    'Mean geophysical threshold that identifies impacted aquaculture.',
-            },
-            {
-                name: 'impact_exceeds_threshold',
-                type: 'boolean',
-                default: true,
-            },
-            {
-                name: 'output_file_suffix',
-                type: 'string',
-                default: 'gpkg',
-            },
-        ],
-    },
-    {
-        path: '/api/iass/flood_population_impact_assessment',
-        label: 'Population Impact Assessment',
-        category: 'Assessment',
-        description: 'Enqueue population impact assessment.',
-        fields: [
-            {
-                name: 'population_data_uri',
-                type: 'string',
-                default:
-                    'file:///app/iass/data/czdt_gpw_v4_population_density_rev11_2020_30_sec_2020.nc',
-            },
-            {
-                name: 'population_data_variable',
-                type: 'string',
-                default: 'population',
-            },
-            {
-                name: 'geophysical_data_uri',
-                type: 'string',
-                default: 'file:///app/iass/data/LIS_HIST_202001010000_remap.d01.nc',
-            },
-            {
-                name: 'geophysical_data_variable',
-                type: 'string',
-                default: 'FloodedFrac_tavg',
-            },
-            {
-                name: 'threshold',
-                type: 'number',
-                default: 0.15,
-                min: 0,
-                max: 1,
-            },
-            {
-                name: 'impact_exceeds_threshold',
-                type: 'boolean',
-                default: true,
-            },
-            {
-                name: 'output_file_suffix',
-                type: 'string',
-                default: 'zarr',
-            },
-            {
-                name: 'aggregation_units_uri',
-                type: 'string',
-                default: 'file:///app/iass/data/czdt_tl_2024_us_county.gpkg',
-            },
-            {
-                name: 'aggregation_output_file_suffix',
-                type: 'string',
-                default: 'gpkg',
-            },
-        ],
-    },
-]
+// Algorithms fetched from the workflows API (baseUrl + '/processes')
+// Shape: { processes: [{ id, title, description, version, deployedBy, processID, ... }] }
+// This global gets populated asynchronously via fetchProcesses() when the tool opens.
+let PROCESSES = []
 
 function escapeHTML(s) {
     return String(s == null ? '' : s)
@@ -288,13 +157,39 @@ function isTerminal(status) {
     return s === 'completed' || s === 'failed' || s === 'cancelled'
 }
 
-// Human-friendly label for a job's endpoint/template id. Locally-submitted
-// jobs carry an ENDPOINTS path we can match exactly; server-only jobs carry
-// a template_id like "flood_population_impact_v1" that we prettify.
+// Fetch the list of available algorithms/processes from the workflows API.
+// Uses MMGIS backend proxy to avoid CORS issues.
+function fetchProcesses() {
+    const proxyUrl = 'api/mapjobsubmit/processes?baseUrl=' + encodeURIComponent(Workflows.baseUrl)
+    console.log('[MapJobSubmitTool] Fetching processes via proxy:', mmgisUrl(proxyUrl))
+    return mmgisFetch(proxyUrl)
+        .then((r) => r.json())
+        .then((data) => {
+            console.log('[MapJobSubmitTool] /processes response:', data)
+            if (!data || !Array.isArray(data.processes)) {
+                console.warn('[MapJobSubmitTool] /processes returned invalid shape:', data)
+                return []
+            }
+            console.log('[MapJobSubmitTool] Fetched', data.processes.length, 'processes')
+            return data.processes
+        })
+        .catch((err) => {
+            console.warn('[MapJobSubmitTool] fetchProcesses failed', err)
+            return []
+        })
+}
+
+// Human-friendly label for a job's endpoint/processID. If we recognize the
+// processID in our fetched PROCESSES list, return its title; otherwise prettify.
 function endpointLabel(endpoint) {
     if (!endpoint) return ''
-    const known = ENDPOINTS.find((e) => e.path === endpoint)
-    if (known) return known.label
+    // Try parsing as a processID integer if it looks like one
+    const asInt = parseInt(endpoint, 10)
+    if (!isNaN(asInt) && String(asInt) === String(endpoint)) {
+        const proc = PROCESSES.find((p) => p.processID === asInt)
+        if (proc) return proc.title || proc.id || `Process ${asInt}`
+    }
+    // Fallback: prettify the string
     return endpoint
         .replace(/^\/api\//, '')
         .replace(/_v\d+$/i, '')
@@ -982,7 +877,10 @@ const Workflows = {
     width: 360,
     vars: null,
     baseUrl: '',
-    selectedEndpointPath: null,
+    selectedProcessID: null,
+    selectedAlgorithmId: null,
+    selectedVersion: null,
+    selectedDeployer: null,
     jobs: {},
     jobIds: [],
     filterText: '',
@@ -1103,18 +1001,20 @@ const Workflows = {
         }, AUTH_POLL_INTERVAL_MS)
     },
 
-    submit: function (endpointPath, payload, name) {
+    submit: function (processID, payload, name) {
+        // For MAAP OGC workflows, the submit endpoint is /ogc/processes/{processID}
+        const endpointPath = `processes/${processID}/execution`
         return submitJob(endpointPath, payload).then((body) => {
             const jobId = body.job_id || body._id
             if (!jobId) throw new Error('No job_id in response')
             Workflows.jobs[jobId] = {
-                endpoint: endpointPath,
+                endpoint: String(processID), // store processID as the endpoint identifier
                 payload: payload,
                 name: name || '',
                 status: readStatus(body) || 'queued',
                 startedAt: Date.now(),
             }
-            recordSubmittedJob(jobId, endpointPath, payload, name)
+            recordSubmittedJob(jobId, String(processID), payload, name)
             // Prepend to ordered list and jump to first page so the user
             // sees their submission immediately.
             const i = Workflows.jobIds.indexOf(jobId)
@@ -1652,25 +1552,19 @@ function interfaceWithMMGIS() {
     const $authBanner = $('<div id="mjs-auth-banner"></div>')
     $root.append($authBanner)
 
-    $root.append('<div class="mjs-section-label">Endpoint</div>')
-    const $endpointSelect = $('<select id="mjs-endpoint-select"></select>')
-    const byCategory = ENDPOINTS.reduce((acc, ep) => {
-        const cat = ep.category || 'Other'
-        ;(acc[cat] = acc[cat] || []).push(ep)
-        return acc
-    }, {})
-    Object.keys(byCategory).forEach((cat) => {
-        const $group = $(`<optgroup label="${escapeHTML(cat)}"></optgroup>`)
-        byCategory[cat].forEach((ep) => {
-            $group.append(
-                `<option value="${escapeHTML(ep.path)}">${escapeHTML(
-                    ep.label
-                )}</option>`
-            )
-        })
-        $endpointSelect.append($group)
-    })
-    $root.append($endpointSelect)
+    // Algorithm selection dropdowns (3-step: id → version → deployer)
+    $root.append('<div class="mjs-section-label">Algorithm</div>')
+    const $algorithmSelect = $('<select id="mjs-algorithm-select"><option value="">Select algorithm...</option></select>')
+    $root.append($algorithmSelect)
+
+    $root.append('<div class="mjs-section-label">Version</div>')
+    const $versionSelect = $('<select id="mjs-version-select" disabled><option value="">Select version...</option></select>')
+    $root.append($versionSelect)
+
+    $root.append('<div class="mjs-section-label">Deployer</div>')
+    const $deployerSelect = $('<select id="mjs-deployer-select" disabled><option value="">Select deployer...</option></select>')
+    $root.append($deployerSelect)
+
     $root.append('<div class="mjs-endpoint-desc" id="mjs-endpoint-desc"></div>')
 
     $root.append('<div class="mjs-section-label">Run Name *</div>')
@@ -1785,19 +1679,79 @@ function interfaceWithMMGIS() {
 
     let collectPayload = () => ({})
 
-    function renderSelectedEndpoint() {
-        const ep = ENDPOINTS.find(
-            (e) => e.path === Workflows.selectedEndpointPath
-        )
-        if (!ep) return
-        $('#mjs-endpoint-desc').text(ep.description || ep.label)
-        collectPayload = buildForm($form, ep.fields)
+    function renderSelectedProcess() {
+        if (!Workflows.selectedProcessID) {
+            $('#mjs-endpoint-desc').text('')
+            collectPayload = buildForm($form, [])
+            return
+        }
+        const proc = PROCESSES.find((p) => p.processID === Workflows.selectedProcessID)
+        if (!proc) {
+            $('#mjs-endpoint-desc').text('')
+            collectPayload = buildForm($form, [])
+            return
+        }
+        const desc = proc.description || proc.title || ''
+        $('#mjs-endpoint-desc').text(desc)
+        // For now, we have no field metadata from the /processes endpoint,
+        // so the form is empty. In the future, fetch the full process schema
+        // from the cwlLink or a detail endpoint to build the form.
+        collectPayload = buildForm($form, [])
+    }
+
+    function populateAlgorithmDropdown() {
+        const $select = $('#mjs-algorithm-select')
+        $select.empty().append('<option value="">Select algorithm...</option>')
+        if (PROCESSES.length === 0) {
+            $select.attr('disabled', true)
+            return
+        }
+        // Get unique algorithm ids
+        const uniqueIds = Array.from(new Set(PROCESSES.map((p) => p.id)))
+        uniqueIds.sort()
+        uniqueIds.forEach((id) => {
+            $select.append(`<option value="${escapeHTML(id)}">${escapeHTML(id)}</option>`)
+        })
+        $select.attr('disabled', false)
+    }
+
+    function populateVersionDropdown(algorithmId) {
+        const $select = $('#mjs-version-select')
+        $select.empty().append('<option value="">Select version...</option>')
+        if (!algorithmId) {
+            $select.attr('disabled', true)
+            return
+        }
+        const matches = PROCESSES.filter((p) => p.id === algorithmId)
+        const uniqueVersions = Array.from(new Set(matches.map((p) => p.version)))
+        uniqueVersions.sort()
+        uniqueVersions.forEach((v) => {
+            $select.append(`<option value="${escapeHTML(v)}">${escapeHTML(v)}</option>`)
+        })
+        $select.attr('disabled', false)
+    }
+
+    function populateDeployerDropdown(algorithmId, version) {
+        const $select = $('#mjs-deployer-select')
+        $select.empty().append('<option value="">Select deployer...</option>')
+        if (!algorithmId || !version) {
+            $select.attr('disabled', true)
+            return
+        }
+        const matches = PROCESSES.filter((p) => p.id === algorithmId && p.version === version)
+        const uniqueDeployers = Array.from(new Set(matches.map((p) => p.deployedBy)))
+        uniqueDeployers.sort()
+        uniqueDeployers.forEach((d) => {
+            const proc = matches.find((p) => p.deployedBy === d)
+            const label = d || '(unknown)'
+            $select.append(`<option value="${proc.processID}">${escapeHTML(label)}</option>`)
+        })
+        $select.attr('disabled', false)
     }
 
     function enableSubmit() {
-        Workflows.selectedEndpointPath = ENDPOINTS[0].path
-        $endpointSelect.val(Workflows.selectedEndpointPath)
-        renderSelectedEndpoint()
+        // Populate the algorithm dropdown now that we have PROCESSES
+        populateAlgorithmDropdown()
         $submit.text('Submit').attr('disabled', false)
     }
 
@@ -1819,7 +1773,9 @@ function interfaceWithMMGIS() {
             Workflows.connect()
         })
         $authBanner.append($row)
-        $submit.text('Sign in to continue').attr('disabled', true)
+        // Enable submit button even without auth - user can still select algorithms
+        // and will get an error on submit if auth is required
+        $submit.text('Submit').attr('disabled', false)
     }
 
     function renderAuthenticated() {
@@ -1829,26 +1785,63 @@ function interfaceWithMMGIS() {
                 Workflows.baseUrl
             )} <a class="mjs-signout" href="#">sign out</a></div>`
         )
-        $row.find('.wf-signout').on('click', function (e) {
+        $row.find('.mjs-signout').on('click', function (e) {
             e.preventDefault()
             directFetchJSON(
                 trimSlash(Workflows.baseUrl) + '/api/logout'
             ).finally(() => renderUnauthenticated())
         })
         $authBanner.append($row)
-        enableSubmit()
+        // Processes already fetched at startup, just enable submit
+        $submit.text('Submit').attr('disabled', false)
         // Pull existing jobs from the server so the panel isn't empty on
         // first open of a new session.
         Workflows.refreshFromServer()
     }
 
-    $endpointSelect.on('change', function () {
-        Workflows.selectedEndpointPath = $(this).val()
-        renderSelectedEndpoint()
+    // Cascade: algorithm → version → deployer → processID
+    $('#mjs-algorithm-select').on('change', function () {
+        Workflows.selectedAlgorithmId = $(this).val()
+        Workflows.selectedVersion = null
+        Workflows.selectedDeployer = null
+        Workflows.selectedProcessID = null
+        $('#mjs-version-select').val('').attr('disabled', true)
+        $('#mjs-deployer-select').val('').attr('disabled', true)
+        if (Workflows.selectedAlgorithmId) {
+            populateVersionDropdown(Workflows.selectedAlgorithmId)
+        }
+        renderSelectedProcess()
+    })
+
+    $('#mjs-version-select').on('change', function () {
+        Workflows.selectedVersion = $(this).val()
+        Workflows.selectedDeployer = null
+        Workflows.selectedProcessID = null
+        $('#mjs-deployer-select').val('').attr('disabled', true)
+        if (Workflows.selectedAlgorithmId && Workflows.selectedVersion) {
+            populateDeployerDropdown(Workflows.selectedAlgorithmId, Workflows.selectedVersion)
+        }
+        renderSelectedProcess()
+    })
+
+    $('#mjs-deployer-select').on('change', function () {
+        const processID = parseInt($(this).val(), 10)
+        if (isNaN(processID)) {
+            Workflows.selectedProcessID = null
+            Workflows.selectedDeployer = null
+        } else {
+            Workflows.selectedProcessID = processID
+            const proc = PROCESSES.find((p) => p.processID === processID)
+            Workflows.selectedDeployer = proc ? proc.deployedBy : null
+        }
+        renderSelectedProcess()
     })
 
     $submit.on('click', function () {
-        if (!Workflows.selectedEndpointPath) return
+        if (!Workflows.selectedProcessID) {
+            window.alert('Please select an algorithm, version, and deployer.')
+            return
+        }
         const name = $nameInput.val().trim()
         if (!name) {
             $nameInput.addClass('mjs-input-error').trigger('focus')
@@ -1857,7 +1850,7 @@ function interfaceWithMMGIS() {
         }
         const payload = collectPayload()
         $submit.attr('disabled', true).text('Submitting…')
-        Workflows.submit(Workflows.selectedEndpointPath, payload, name)
+        Workflows.submit(Workflows.selectedProcessID, payload, name)
             .then(() => {
                 $submit.attr('disabled', false).text('Submit')
                 $nameInput.val('')
@@ -1874,7 +1867,14 @@ function interfaceWithMMGIS() {
         )
         $submit.text('Not configured').attr('disabled', true)
     } else {
-        $authBanner.append('<div class="mjs-auth-msg">Checking sign-in…</div>')
+        $authBanner.append('<div class="mjs-auth-msg">Loading algorithms…</div>')
+        // Fetch processes first (doesn't require auth)
+        fetchProcesses().then((procs) => {
+            console.log('[MapJobSubmitTool] Fetched', procs.length, 'processes')
+            PROCESSES = procs
+            populateAlgorithmDropdown()
+        })
+        // Then check auth for submitting jobs
         checkAuth().then((ok) => {
             if (ok) renderAuthenticated()
             else renderUnauthenticated()
