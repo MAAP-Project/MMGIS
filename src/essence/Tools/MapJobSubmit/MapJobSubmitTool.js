@@ -179,6 +179,22 @@ function fetchProcesses() {
         })
 }
 
+// Fetch details for a specific process including its input schema.
+function fetchProcessDetails(processID) {
+    const proxyUrl = `api/mapjobsubmit/processes/${processID}?baseUrl=` + encodeURIComponent(Workflows.baseUrl)
+    console.log('[MapJobSubmitTool] Fetching process details via proxy:', mmgisUrl(proxyUrl))
+    return mmgisFetch(proxyUrl)
+        .then((r) => r.json())
+        .then((data) => {
+            console.log('[MapJobSubmitTool] Process details response:', data)
+            return data
+        })
+        .catch((err) => {
+            console.warn('[MapJobSubmitTool] fetchProcessDetails failed', err)
+            return null
+        })
+}
+
 // Human-friendly label for a job's endpoint/processID. If we recognize the
 // processID in our fetched PROCESSES list, return its title; otherwise prettify.
 function endpointLabel(endpoint) {
@@ -347,6 +363,53 @@ function readError(body) {
 
 function trimSlash(u) {
     return (u || '').replace(/\/+$/, '')
+}
+
+// Build a form from the API's input schema (inputs object from process details).
+// Returns a function that collects the payload.
+function buildFormFromInputs($parent, inputs) {
+    $parent.empty()
+    if (!inputs || Object.keys(inputs).length === 0) {
+        $parent.append('<div class="mjs-empty">No parameters required.</div>')
+        return () => ({})
+    }
+
+    const inputRefs = []
+    Object.entries(inputs).forEach(([key, input]) => {
+        const id = `wf-input-${key.replace(/[^A-Za-z0-9_-]/g, '_')}`
+        const $field = $('<div class="mjs-field"></div>')
+
+        // Label using the input name/key
+        $field.append(
+            `<div class="mjs-field-label"><label for="${id}">${escapeHTML(key)}</label></div>`
+        )
+
+        // Text input (all inputs are text per requirement)
+        const $input = $('<input type="text" />')
+            .attr('id', id)
+            .attr('placeholder', input.placeholder || '')
+
+        $field.append($input)
+
+        // Description if provided
+        if (input.description) {
+            $field.append(
+                `<div class="mjs-field-description">${escapeHTML(input.description)}</div>`
+            )
+        }
+
+        $parent.append($field)
+        inputRefs.push({ key, $input })
+    })
+
+    return function collectPayload() {
+        const out = {}
+        inputRefs.forEach(({ key, $input }) => {
+            const val = $input.val()
+            if (val !== '') out[key] = val
+        })
+        return out
+    }
 }
 
 function buildForm($parent, fields) {
@@ -1002,7 +1065,7 @@ const Workflows = {
     },
 
     submit: function (processID, payload, name) {
-        // For MAAP OGC workflows, the submit endpoint is /ogc/processes/{processID}
+        // For MAAP OGC workflows, the submit endpoint is /ogc/processes/{processID}/execution
         const endpointPath = `processes/${processID}/execution`
         return submitJob(endpointPath, payload).then((body) => {
             const jobId = body.job_id || body._id
@@ -1682,21 +1745,35 @@ function interfaceWithMMGIS() {
     function renderSelectedProcess() {
         if (!Workflows.selectedProcessID) {
             $('#mjs-endpoint-desc').text('')
-            collectPayload = buildForm($form, [])
+            $form.empty().append('<div class="mjs-empty">Select an algorithm to see parameters.</div>')
+            collectPayload = () => ({})
             return
         }
-        const proc = PROCESSES.find((p) => p.processID === Workflows.selectedProcessID)
-        if (!proc) {
-            $('#mjs-endpoint-desc').text('')
-            collectPayload = buildForm($form, [])
-            return
-        }
-        const desc = proc.description || proc.title || ''
-        $('#mjs-endpoint-desc').text(desc)
-        // For now, we have no field metadata from the /processes endpoint,
-        // so the form is empty. In the future, fetch the full process schema
-        // from the cwlLink or a detail endpoint to build the form.
-        collectPayload = buildForm($form, [])
+
+        // Show loading state
+        $('#mjs-endpoint-desc').text('Loading...')
+        $form.empty().append('<div class="mjs-empty">Loading parameters...</div>')
+
+        // Fetch process details including inputs
+        fetchProcessDetails(Workflows.selectedProcessID).then((details) => {
+            if (!details) {
+                $('#mjs-endpoint-desc').text('Failed to load process details')
+                $form.empty().append('<div class="mjs-empty">Failed to load parameters.</div>')
+                collectPayload = () => ({})
+                return
+            }
+
+            const desc = details.description || details.title || ''
+            $('#mjs-endpoint-desc').text(desc)
+
+            // Build form from the inputs object
+            if (details.inputs && typeof details.inputs === 'object') {
+                collectPayload = buildFormFromInputs($form, details.inputs)
+            } else {
+                $form.empty().append('<div class="mjs-empty">No parameters required.</div>')
+                collectPayload = () => ({})
+            }
+        })
     }
 
     function populateAlgorithmDropdown() {
