@@ -385,9 +385,11 @@ function buildFormFromInputs($parent, inputs) {
         )
 
         // Text input (all inputs are text per requirement)
+        const defaultValue = input.default != null ? String(input.default) : ''
         const $input = $('<input type="text" />')
             .attr('id', id)
             .attr('placeholder', input.placeholder || '')
+            .val(defaultValue)
 
         $field.append($input)
 
