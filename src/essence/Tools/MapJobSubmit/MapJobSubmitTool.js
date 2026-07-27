@@ -379,19 +379,43 @@ function buildFormFromInputs($parent, inputs) {
         const id = `wf-input-${key.replace(/[^A-Za-z0-9_-]/g, '_')}`
         const $field = $('<div class="mjs-field"></div>')
 
+        // Determine input type
+        const inputType = (input.type || '').toLowerCase()
+
         // Label using the input name/key
+        const typeLabel = inputType ? ` <span class="mjs-field-type">${escapeHTML(inputType)}</span>` : ''
         $field.append(
-            `<div class="mjs-field-label"><label for="${id}">${escapeHTML(key)}</label></div>`
+            `<div class="mjs-field-label"><label for="${id}">${escapeHTML(key)}</label>${typeLabel}</div>`
         )
 
-        // Text input (all inputs are text per requirement)
-        const defaultValue = input.default != null ? String(input.default) : ''
-        const $input = $('<input type="text" />')
-            .attr('id', id)
-            .attr('placeholder', input.placeholder || '')
-            .val(defaultValue)
+        let $input
+        if (inputType === 'boolean') {
+            // Boolean toggle switch
+            const defaultValue = input.default != null ? input.default : false
+            const checked = defaultValue === true || defaultValue === 'true'
 
-        $field.append($input)
+            const $toggleWrapper = $('<div class="mjs-toggle-wrapper"></div>')
+            $input = $('<input type="checkbox" class="mjs-toggle-input" />')
+                .attr('id', id)
+                .prop('checked', checked)
+            const $slider = $('<span class="mjs-toggle-slider"></span>')
+
+            // Make the slider clickable
+            $slider.on('click', function() {
+                $input.prop('checked', !$input.prop('checked'))
+            })
+
+            $toggleWrapper.append($input).append($slider)
+            $field.append($toggleWrapper)
+        } else {
+            // Text input for all other types
+            const defaultValue = input.default != null ? String(input.default) : ''
+            $input = $('<input type="text" />')
+                .attr('id', id)
+                .attr('placeholder', input.placeholder || '')
+                .val(defaultValue)
+            $field.append($input)
+        }
 
         // Description if provided
         if (input.description) {
@@ -401,14 +425,18 @@ function buildFormFromInputs($parent, inputs) {
         }
 
         $parent.append($field)
-        inputRefs.push({ key, $input })
+        inputRefs.push({ key, $input, type: inputType })
     })
 
     return function collectPayload() {
         const out = {}
-        inputRefs.forEach(({ key, $input }) => {
-            const val = $input.val()
-            if (val !== '') out[key] = val
+        inputRefs.forEach(({ key, $input, type }) => {
+            if (type === 'boolean') {
+                out[key] = $input.is(':checked')
+            } else {
+                const val = $input.val()
+                if (val !== '') out[key] = val
+            }
         })
         return out
     }

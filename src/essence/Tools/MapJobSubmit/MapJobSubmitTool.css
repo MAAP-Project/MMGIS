@@ -582,3 +582,51 @@
 #mapJobSubmitTool .mjs-signout:hover {
     color: #fff;
 }
+
+/* Toggle switch for boolean inputs */
+#mapJobSubmitTool .mjs-toggle-wrapper {
+    display: inline-block;
+    position: relative;
+}
+
+#mapJobSubmitTool .mjs-toggle-input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+    position: absolute;
+}
+
+#mapJobSubmitTool .mjs-toggle-slider {
+    display: inline-block;
+    width: 36px;
+    height: 20px;
+    background: #666;
+    border-radius: 10px;
+    position: relative;
+    cursor: pointer;
+    transition: background 0.3s ease;
+}
+
+#mapJobSubmitTool .mjs-toggle-slider::before {
+    content: '';
+    position: absolute;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: white;
+    left: 3px;
+    top: 3px;
+    transition: transform 0.3s ease;
+}
+
+#mapJobSubmitTool .mjs-toggle-input:checked + .mjs-toggle-slider {
+    background: #00A9E0;
+}
+
+#mapJobSubmitTool .mjs-toggle-input:checked + .mjs-toggle-slider::before {
+    transform: translateX(16px);
+}
+
+#mapJobSubmitTool .mjs-toggle-slider:hover {
+    opacity: 0.9;
+}
