@@ -630,3 +630,54 @@
 #mapJobSubmitTool .mjs-toggle-slider:hover {
     opacity: 0.9;
 }
+
+/* Personal Access Token Input Section */
+#mapJobSubmitTool .mjs-auth-input-section {
+    margin-bottom: 12px;
+}
+
+#mapJobSubmitTool #mjs-token-input {
+    width: 100%;
+    box-sizing: border-box;
+    background: var(--color-k);
+    color: #fff;
+    border: 1px solid #444;
+    padding: 6px 8px;
+    font-size: 12px;
+    font-family: monospace;
+    margin: 4px 0;
+}
+
+#mapJobSubmitTool #mjs-token-input:focus {
+    border-color: var(--color-a);
+    outline: none;
+}
+
+#mapJobSubmitTool .mjs-connect-btn {
+    width: 100%;
+    background: var(--color-a);
+    color: var(--color-l);
+    border: none;
+    padding: 8px;
+    cursor: pointer;
+    text-transform: uppercase;
+    font-size: 12px;
+    letter-spacing: 0.04em;
+    margin-top: 4px;
+}
+
+#mapJobSubmitTool .mjs-connect-btn:hover:not(:disabled) {
+    filter: brightness(1.15);
+}
+
+#mapJobSubmitTool .mjs-connect-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+#mapJobSubmitTool .mjs-token-display {
+    font-family: monospace;
+    font-size: 10px;
+    color: #888;
+    margin: 4px 0;
+}

@@ -10,8 +10,6 @@ import ToolController_ from '../../Basics/ToolController_/ToolController_'
 
 const VECTOR_EXTS = ['geojson', 'json', 'gpkg', 'kml']
 const DEFAULT_POLL_INTERVAL_MS = 30000
-const AUTH_POLL_INTERVAL_MS = 2000
-const AUTH_POLL_TIMEOUT_MS = 5 * 60 * 1000
 const SUBMITTED_STORAGE_KEY = 'mmgis.workflows.submitted'
 const SUBMITTED_MAX_ENTRIES = 100
 const PAGE_SIZE = 10
@@ -28,13 +26,21 @@ function mmgisUrl(path) {
 }
 
 function mmgisFetch(path, init) {
+    const headers = {
+        Accept: 'application/json',
+        ...((init && init.headers) || {}),
+    }
+
+    // Add x-proxy-ticket header if token is available (X- prefix is required for custom headers)
+    if (Workflows.personalAccessToken) {
+        headers['x-proxy-ticket'] = Workflows.personalAccessToken
+        console.log('[MapJobSubmitTool] Adding x-proxy-ticket header to request:', path)
+    } 
+
     return fetch(mmgisUrl(path), {
         credentials: 'same-origin',
-        headers: {
-            Accept: 'application/json',
-            ...((init && init.headers) || {}),
-        },
-        ...(init || {}),
+        ...init,
+        headers: headers,  
     })
 }
 
@@ -155,6 +161,33 @@ function normalizeStatus(s) {
 function isTerminal(status) {
     const s = normalizeStatus(status)
     return s === 'completed' || s === 'failed' || s === 'cancelled'
+}
+
+// Verify the personal access token by calling the /jobs endpoint.
+// Returns true if valid, false if invalid (403 or other error).
+function verifyToken() {
+    const proxyUrl = 'api/mapjobsubmit/jobs?baseUrl=' + encodeURIComponent(Workflows.baseUrl)
+    return mmgisFetch(proxyUrl)
+        .then((r) => {
+            if (r.status === 403) {
+                console.warn('[MapJobSubmitTool] Token verification failed: 403 Forbidden')
+                return false
+            }
+            if (!r.ok) {
+                console.warn('[MapJobSubmitTool] Token verification failed:', r.status)
+                return false
+            }
+            return r.json()
+        })
+        .then((data) => {
+            if (data === false) return false // 403 or error
+            console.log('[MapJobSubmitTool] Token verified successfully')
+            return true
+        })
+        .catch((err) => {
+            console.warn('[MapJobSubmitTool] verifyToken failed', err)
+            return false
+        })
 }
 
 // Fetch the list of available algorithms/processes from the workflows API.
@@ -894,14 +927,22 @@ function addLayerForJob(jobId, job) {
 
 // ---- HTTP helpers ----
 
+// TODO this whole function might need to be deleted because only proxying has been working for me 
 function directFetchJSON(url, init) {
+    const headers = {
+        Accept: 'application/json',
+        ...((init && init.headers) || {}),
+    }
+
+    // Add proxy-ticket header if token is available
+    if (Workflows.personalAccessToken) {
+        headers['proxy-ticket'] = Workflows.personalAccessToken
+    }
+
     return fetch(url, {
         credentials: 'include',
         ...(init || {}),
-        headers: {
-            Accept: 'application/json',
-            ...((init && init.headers) || {}),
-        },
+        headers: headers,
     }).then(async (res) => {
         const text = await res.text()
         let json
@@ -914,22 +955,6 @@ function directFetchJSON(url, init) {
     })
 }
 
-function checkAuth() {
-    return directFetchJSON(
-        trimSlash(Workflows.baseUrl) + '/api/auth-status'
-    )
-        .then((r) => {
-            if (!r.ok) return false
-            if (
-                r.body &&
-                (r.body.authenticated === false ||
-                    r.body.status === 'unauthenticated')
-            )
-                return false
-            return true
-        })
-        .catch(() => false)
-}
 
 function submitJob(endpointPath, payload) {
     return directFetchJSON(trimSlash(Workflows.baseUrl) + endpointPath, {
@@ -959,7 +984,7 @@ function pollJob(jobId) {
 
 function listJobIds() {
     return directFetchJSON(
-        trimSlash(Workflows.baseUrl) + '/api/workflows/all_ids'
+        trimSlash(Workflows.baseUrl) + '/jobs'
     ).then((r) => (r.ok && Array.isArray(r.body) ? r.body : []))
 }
 
@@ -984,6 +1009,7 @@ const Workflows = {
     authPollTimer: null,
     onAuthReady: null,
     pollIntervalMs: DEFAULT_POLL_INTERVAL_MS,
+    personalAccessToken: null, // Stored in memory only for security
     MMGISInterface: null,
 
     make: function () {
@@ -1046,52 +1072,50 @@ const Workflows = {
             clearInterval(Workflows.authPollTimer)
             Workflows.authPollTimer = null
         }
+        // Clear personal access token from memory
+        Workflows.personalAccessToken = null
     },
 
-    // Opens the workflows API's OAuth login in a popup, then polls
-    // auth-status until the session cookie lands (or times out).
-    connect: function () {
-        const popup = window.open(
-            trimSlash(Workflows.baseUrl) + '/api/login',
-            'wf_login',
-            'width=520,height=720,resizable,scrollbars'
-        )
-        if (!popup) {
-            window.alert(
-                'Popup blocked. Allow popups for this site and click Connect again.'
-            )
+    // Authenticates using a personal access token by verifying it with the /jobs endpoint
+    connect: function (token) {
+        if (!token || token.trim().length === 0) {
+            window.alert('Please enter a valid personal access token.')
             return
         }
-        // Keep the reference so we can close the popup ourselves once
-        // auth-status confirms sign-in — the API redirects it to /api/docs
-        // and never closes it.
-        Workflows._authPopup = popup
-        Workflows.startAuthPoll()
-    },
+        Workflows.personalAccessToken = token.trim()
 
-    startAuthPoll: function () {
-        if (Workflows.authPollTimer) return
-        const startedAt = Date.now()
-        Workflows.authPollTimer = setInterval(() => {
-            if (Date.now() - startedAt > AUTH_POLL_TIMEOUT_MS) {
-                clearInterval(Workflows.authPollTimer)
-                Workflows.authPollTimer = null
+        // Verify the token by calling /jobs endpoint (returns 403 if invalid)
+        verifyToken().then((isValid) => {
+            if (!isValid) {
+                Workflows.personalAccessToken = null
+                window.alert('Invalid personal access token. Please check your token and try again.')
+                if (typeof Workflows._renderUnauthenticated === 'function') {
+                    Workflows._renderUnauthenticated()
+                }
                 return
             }
-            checkAuth().then((ok) => {
-                if (!ok) return
-                clearInterval(Workflows.authPollTimer)
-                Workflows.authPollTimer = null
-                if (Workflows._authPopup) {
-                    try {
-                        Workflows._authPopup.close()
-                    } catch (e) {}
-                    Workflows._authPopup = null
+
+            // Token is valid, now fetch processes
+            fetchProcesses().then((procs) => {
+                PROCESSES = procs
+                // Call renderAuthenticated (will be defined in interfaceWithMMGIS context)
+                if (typeof Workflows._renderAuthenticated === 'function') {
+                    Workflows._renderAuthenticated()
                 }
-                if (typeof Workflows.onAuthReady === 'function')
-                    Workflows.onAuthReady()
+            }).catch(() => {
+                // Processes failed to fetch, but token is valid - still authenticate
+                PROCESSES = []
+                if (typeof Workflows._renderAuthenticated === 'function') {
+                    Workflows._renderAuthenticated()
+                }
             })
-        }, AUTH_POLL_INTERVAL_MS)
+        }).catch(() => {
+            Workflows.personalAccessToken = null
+            window.alert('Failed to verify token. Please try again.')
+            if (typeof Workflows._renderUnauthenticated === 'function') {
+                Workflows._renderUnauthenticated()
+            }
+        })
     },
 
     submit: function (processID, payload, name) {
@@ -1864,43 +1888,67 @@ function interfaceWithMMGIS() {
 
     function renderUnauthenticated() {
         $authBanner.empty()
-        const $row = $(
-            `<div class="mjs-auth-msg">Not signed in to ${escapeHTML(
-                Workflows.baseUrl
-            )}. <a class="mjs-signout wf-connect-link" href="#">connect</a></div>`
+        const $section = $('<div class="mjs-auth-input-section"></div>')
+        $section.append('<div class="mjs-section-label">Personal Access Token</div>')
+        const $tokenInput = $(
+            '<input type="password" id="mjs-token-input" placeholder="Paste your personal access token" autocomplete="off" />'
         )
-        $row.find('.wf-connect-link').on('click', function (e) {
-            e.preventDefault()
-            const $link = $(this)
-            $link.text('waiting for sign-in…')
-            Workflows.onAuthReady = function () {
-                Workflows.onAuthReady = null
-                renderAuthenticated()
+        const $connectBtn = $(
+            '<button type="button" class="mjs-connect-btn">Connect</button>'
+        )
+
+        $connectBtn.on('click', function () {
+            const token = $tokenInput.val().trim()
+            if (!token) {
+                window.alert('Please enter a personal access token.')
+                return
             }
-            Workflows.connect()
+            $connectBtn.text('Connecting...').attr('disabled', true)
+            Workflows.connect(token)
         })
-        $authBanner.append($row)
+
+        // Allow Enter key to submit
+        $tokenInput.on('keydown', function (e) {
+            if (e.key === 'Enter') {
+                $connectBtn.trigger('click')
+            }
+        })
+
+        $section.append($tokenInput).append($connectBtn)
+        $authBanner.append($section)
+
         // Enable submit button even without auth - user can still select algorithms
         // and will get an error on submit if auth is required
         $submit.text('Submit').attr('disabled', false)
     }
 
+    // Store render functions on Workflows object so connect() can call them
+    Workflows._renderUnauthenticated = renderUnauthenticated
+    Workflows._renderAuthenticated = renderAuthenticated
+
     function renderAuthenticated() {
         $authBanner.empty()
+
         const $row = $(
-            `<div class="mjs-auth-ok">Signed in · ${escapeHTML(
+            `<div class="mjs-auth-ok">Connected · ${escapeHTML(
                 Workflows.baseUrl
             )} <a class="mjs-signout" href="#">sign out</a></div>`
         )
         $row.find('.mjs-signout').on('click', function (e) {
             e.preventDefault()
-            directFetchJSON(
-                trimSlash(Workflows.baseUrl) + '/api/logout'
-            ).finally(() => renderUnauthenticated())
+            // Clear the token from memory
+            Workflows.personalAccessToken = null
+            renderUnauthenticated()
         })
+
         $authBanner.append($row)
-        // Processes already fetched at startup, just enable submit
+
+        // Populate algorithm dropdown with fetched processes
+        populateAlgorithmDropdown()
+
+        // Enable submit button
         $submit.text('Submit').attr('disabled', false)
+
         // Pull existing jobs from the server so the panel isn't empty on
         // first open of a new session.
         Workflows.refreshFromServer()
@@ -1974,18 +2022,8 @@ function interfaceWithMMGIS() {
         )
         $submit.text('Not configured').attr('disabled', true)
     } else {
-        $authBanner.append('<div class="mjs-auth-msg">Loading algorithms…</div>')
-        // Fetch processes first (doesn't require auth)
-        fetchProcesses().then((procs) => {
-            console.log('[MapJobSubmitTool] Fetched', procs.length, 'processes')
-            PROCESSES = procs
-            populateAlgorithmDropdown()
-        })
-        // Then check auth for submitting jobs
-        checkAuth().then((ok) => {
-            if (ok) renderAuthenticated()
-            else renderUnauthenticated()
-        })
+        // Show the token input form immediately (no OAuth, no auth check needed)
+        renderUnauthenticated()
     }
 
     this.separateFromMMGIS = function () {}

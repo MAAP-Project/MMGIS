@@ -100,4 +100,120 @@ router.get("/processes/:processID", async (req, res) => {
     }
 });
 
+// Proxy endpoint to submit/execute a workflow job.
+router.post("/processes/:processID/execution", async (req, res) => {
+    const baseUrl = req.query.baseUrl;
+    const processID = req.params.processID;
+    const proxyTicket = req.headers['x-proxy-ticket'];
+
+    if (!baseUrl) {
+        return res.status(400).send({
+            status: "failure",
+            message: "baseUrl query parameter is required"
+        });
+    }
+
+    if (!processID) {
+        return res.status(400).send({
+            status: "failure",
+            message: "processID is required"
+        });
+    }
+
+    try {
+        const url = baseUrl.replace(/\/+$/, '') + `/processes/${processID}/execution`;
+        const headers = {
+            'Accept': 'application/json',
+            'Content-Type': 'application/json',
+        };
+
+        // Forward x-proxy-ticket header as proxy-ticket to MAAP API
+        if (proxyTicket) {
+            headers['proxy-ticket'] = proxyTicket;
+        }
+
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: headers,
+            body: JSON.stringify(req.body),
+        });
+
+        if (!response.ok) {
+            throw new Error(`Workflows API returned ${response.status}`);
+        }
+
+        const data = await response.json();
+        res.json(data);
+    } catch (err) {
+        logger(
+            "error",
+            "Failed to submit job to OGC API",
+            req.originalUrl,
+            req,
+            err
+        );
+        res.status(500).send({
+            status: "failure",
+            message: "Failed to submit job to OGC API",
+            error: err.message
+        });
+    }
+});
+
+// Proxy endpoint to get user jobs
+router.get("/jobs", async (req, res) => {
+    logger("warn", "in the get jobs endpoint")
+    logger("info", `ALL request headers: ${JSON.stringify(req.headers)}`, req.originalUrl, req);
+    const baseUrl = req.query.baseUrl;
+    const proxyTicket = req.headers['x-proxy-ticket'];
+
+    if (!baseUrl) {
+        return res.status(400).send({
+            status: "failure",
+            message: "baseUrl query parameter is required"
+        });
+    }
+
+    try {
+        const url = baseUrl.replace(/\/+$/, '') + `/jobs`;
+        const headers = {
+            'Accept': 'application/json',
+        };
+
+        // Forward x-proxy-ticket header as proxy-ticket to MAAP API
+        if (proxyTicket) {
+            headers['proxy-ticket'] = proxyTicket;
+        } else {
+            logger("warn", `No proxy-ticket header received from client`, req.originalUrl, req);
+        }
+
+        const response = await fetch(url, {
+            method: 'GET',
+            headers: headers,
+        });
+
+        if (!response.ok) {
+            const responseText = await response.text();
+            logger("error", `MAAP API returned ${response.status}: ${responseText}`, req.originalUrl, req);
+            throw new Error(`Workflows API returned ${response.status}`);
+        }
+
+        const data = await response.json();
+        res.json(data);
+    } catch (err) {
+        logger(
+            "error",
+            "Failed to fetch jobs details from OGC API",
+            req.originalUrl,
+            req,
+            err
+        );
+        res.status(500).send({
+            status: "failure",
+            message: "Failed to fetch job details from OGC API",
+            error: err.message
+        });
+    }
+});
+
 module.exports = router;
