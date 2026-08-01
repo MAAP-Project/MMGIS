@@ -1025,6 +1025,18 @@ const Workflows = {
         if (!Workflows.paramsExpandedIds)
             Workflows.paramsExpandedIds = new Set()
         Workflows.MMGISInterface = new interfaceWithMMGIS()
+
+        // Fetch processes immediately (no auth required)
+        if (Workflows.baseUrl) {
+            fetchProcesses().then((procs) => {
+                PROCESSES = procs
+                // Trigger UI update if the interface is ready
+                if (typeof Workflows._populateAlgorithmDropdown === 'function') {
+                    Workflows._populateAlgorithmDropdown()
+                }
+            })
+        }
+
         // Hydrate the per-user submitted-job registry asynchronously from
         // the MMGIS DB. UI renders immediately with whatever in-memory state
         // we have; rows refresh once the fetch returns. Legacy localStorage
@@ -1095,20 +1107,10 @@ const Workflows = {
                 return
             }
 
-            // Token is valid, now fetch processes
-            fetchProcesses().then((procs) => {
-                PROCESSES = procs
-                // Call renderAuthenticated (will be defined in interfaceWithMMGIS context)
-                if (typeof Workflows._renderAuthenticated === 'function') {
-                    Workflows._renderAuthenticated()
-                }
-            }).catch(() => {
-                // Processes failed to fetch, but token is valid - still authenticate
-                PROCESSES = []
-                if (typeof Workflows._renderAuthenticated === 'function') {
-                    Workflows._renderAuthenticated()
-                }
-            })
+            // Token is valid - render authenticated state
+            if (typeof Workflows._renderAuthenticated === 'function') {
+                Workflows._renderAuthenticated()
+            }
         }).catch(() => {
             Workflows.personalAccessToken = null
             window.alert('Failed to verify token. Please try again.')
@@ -1925,6 +1927,7 @@ function interfaceWithMMGIS() {
     // Store render functions on Workflows object so connect() can call them
     Workflows._renderUnauthenticated = renderUnauthenticated
     Workflows._renderAuthenticated = renderAuthenticated
+    Workflows._populateAlgorithmDropdown = populateAlgorithmDropdown
 
     function renderAuthenticated() {
         $authBanner.empty()
@@ -1943,7 +1946,7 @@ function interfaceWithMMGIS() {
 
         $authBanner.append($row)
 
-        // Populate algorithm dropdown with fetched processes
+        // Populate algorithm dropdown (already fetched in make())
         populateAlgorithmDropdown()
 
         // Enable submit button
@@ -2022,8 +2025,10 @@ function interfaceWithMMGIS() {
         )
         $submit.text('Not configured').attr('disabled', true)
     } else {
-        // Show the token input form immediately (no OAuth, no auth check needed)
+        // Show the token input form immediately
         renderUnauthenticated()
+        // Populate algorithm dropdown if processes are already loaded
+        populateAlgorithmDropdown()
     }
 
     this.separateFromMMGIS = function () {}
