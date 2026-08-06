@@ -228,6 +228,28 @@ function fetchProcessDetails(processID) {
         })
 }
 
+// Fetch available algorithm resources/queues from the MAAP API.
+function fetchResources() {
+    const proxyUrl = 'api/mapjobsubmit/resources?baseUrl=' + encodeURIComponent(Workflows.baseUrl)
+    console.log('[MapJobSubmitTool] Fetching resources via proxy:', mmgisUrl(proxyUrl))
+    return mmgisFetch(proxyUrl)
+        .then((r) => r.json())
+        .then((data) => {
+            console.log('[MapJobSubmitTool] Resources response:', data)
+            // API returns { code, message, queues: [...] }
+            // Extract the queues array
+            if (data && Array.isArray(data.queues)) {
+                return data.queues
+            }
+            console.warn('[MapJobSubmitTool] No queues array in response:', data)
+            return []
+        })
+        .catch((err) => {
+            console.warn('[MapJobSubmitTool] fetchResources failed', err)
+            return []
+        })
+}
+
 // Human-friendly label for a job's endpoint/processID. If we recognize the
 // processID in our fetched PROCESSES list, return its title; otherwise prettify.
 function endpointLabel(endpoint) {
@@ -400,11 +422,15 @@ function trimSlash(u) {
 
 // Build a form from the API's input schema (inputs object from process details).
 // Returns a function that collects the payload.
-function buildFormFromInputs($parent, inputs) {
+function buildFormFromInputs($parent, inputs, $queueSelect, $tagInput) {
     $parent.empty()
     if (!inputs || Object.keys(inputs).length === 0) {
         $parent.append('<div class="mjs-empty">No parameters required.</div>')
-        return () => ({})
+        return () => ({
+            queue: ($queueSelect && $queueSelect.val()) || '',
+            tag: ($tagInput && $tagInput.val().trim()) || '',
+            inputs: {}
+        })
     }
 
     const inputRefs = []
@@ -462,16 +488,20 @@ function buildFormFromInputs($parent, inputs) {
     })
 
     return function collectPayload() {
-        const out = {}
+        const inputs = {}
         inputRefs.forEach(({ key, $input, type }) => {
             if (type === 'boolean') {
-                out[key] = $input.is(':checked')
+                inputs[key] = $input.is(':checked')
             } else {
                 const val = $input.val()
-                if (val !== '') out[key] = val
+                if (val !== '') inputs[key] = val
             }
         })
-        return out
+        return {
+            queue: ($queueSelect && $queueSelect.val()) || '',
+            tag: ($tagInput && $tagInput.val().trim()) || '',
+            inputs: inputs
+        }
     }
 }
 
@@ -1121,29 +1151,40 @@ const Workflows = {
     },
 
     submit: function (processID, payload, name) {
-        // For MAAP OGC workflows, the submit endpoint is /ogc/processes/{processID}/execution
-        const endpointPath = `processes/${processID}/execution`
-        return submitJob(endpointPath, payload).then((body) => {
-            const jobId = body.job_id || body._id
-            if (!jobId) throw new Error('No job_id in response')
-            Workflows.jobs[jobId] = {
-                endpoint: String(processID), // store processID as the endpoint identifier
-                payload: payload,
-                name: name || '',
-                status: readStatus(body) || 'queued',
-                startedAt: Date.now(),
-            }
-            recordSubmittedJob(jobId, String(processID), payload, name)
-            // Prepend to ordered list and jump to first page so the user
-            // sees their submission immediately.
-            const i = Workflows.jobIds.indexOf(jobId)
-            if (i !== -1) Workflows.jobIds.splice(i, 1)
-            Workflows.jobIds.unshift(jobId)
-            Workflows.page = 0
-            Workflows.ensurePolling()
-            Workflows.renderJobs()
-            return jobId
+        const proxyUrl = `api/mapjobsubmit/processes/${processID}/execution?baseUrl=` + encodeURIComponent(Workflows.baseUrl)
+        console.log('[MapJobSubmitTool] Submitting job via proxy:', mmgisUrl(proxyUrl), 'with payload:', payload)
+        return mmgisFetch(proxyUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload || {}),
         })
+            .then((r) => r.json())
+            .then((data) => {
+                console.log('[MapJobSubmitTool] Job submit response:', data)
+                const jobId = data.jobID
+                if (!jobId) throw new Error('No job_id in response')
+                Workflows.jobs[jobId] = {
+                    endpoint: String(processID), // store processID as the endpoint identifier
+                    payload: payload,
+                    name: name || '',
+                    status: readStatus(body) || 'queued',
+                    startedAt: Date.now(),
+                }
+                recordSubmittedJob(jobId, String(processID), payload, name)
+                // Prepend to ordered list and jump to first page so the user
+                // sees their submission immediately.
+                const i = Workflows.jobIds.indexOf(jobId)
+                if (i !== -1) Workflows.jobIds.splice(i, 1)
+                Workflows.jobIds.unshift(jobId)
+                Workflows.page = 0
+                Workflows.ensurePolling()
+                Workflows.renderJobs()
+                return jobId
+            })
+            .catch((err) => {
+                console.warn('[MapJobSubmitTool] Job submit failed', err)
+                return null
+            })
     },
 
     ensurePolling: function () {
@@ -1196,7 +1237,7 @@ const Workflows = {
             })
     },
 
-    // The job ids currently visible given the text filter (matches run name
+    // The job ids currently visible given the text filter (matches tag
     // or workflow id, case-insensitive).
     getVisibleJobIds: function () {
         const f = Workflows.filterText
@@ -1686,18 +1727,23 @@ function interfaceWithMMGIS() {
 
     $root.append('<div class="mjs-endpoint-desc" id="mjs-endpoint-desc"></div>')
 
-    $root.append('<div class="mjs-section-label">Run Name *</div>')
-    const $nameInput = $(
-        '<input type="text" id="mjs-submit-name" class="mjs-name-input" placeholder="e.g. SF Sept-15 forecast (required)" />'
+    $root.append('<div class="mjs-section-label">Queue *</div>')
+    const $queueSelect = $('<select id="mjs-queue-select" disabled></select>')
+    $queueSelect.append('<option value="">Loading queues...</option>')
+    $root.append($queueSelect)
+
+    $root.append('<div class="mjs-section-label">Tag *</div>')
+    const $tagInput = $(
+        '<input type="text" id="mjs-submit-name" class="mjs-name-input" placeholder="e.g. test_default_inputs (required)" />'
     )
-    $root.append($nameInput)
-    const $nameWarning = $(
-        '<div class="mjs-name-warning">Please name this run before submitting.</div>'
+    $root.append($tagInput)
+    const $tagWarning = $(
+        '<div class="mjs-name-warning">Please provide a tag before submitting.</div>'
     )
-    $root.append($nameWarning)
-    $nameInput.on('input', function () {
-        $nameInput.removeClass('mjs-input-error')
-        $nameWarning.removeClass('visible')
+    $root.append($tagWarning)
+    $tagInput.on('input', function () {
+        $tagInput.removeClass('mjs-input-error')
+        $tagWarning.removeClass('visible')
     })
 
     $root.append('<div class="mjs-section-label">Parameters</div>')
@@ -1802,7 +1848,11 @@ function interfaceWithMMGIS() {
         if (!Workflows.selectedProcessID) {
             $('#mjs-endpoint-desc').text('')
             $form.empty().append('<div class="mjs-empty">Select an algorithm to see parameters.</div>')
-            collectPayload = () => ({})
+            collectPayload = () => ({
+                queue: $queueSelect.val() || '',
+                tag: $tagInput.val().trim() || '',
+                inputs: {}
+            })
             return
         }
 
@@ -1815,7 +1865,11 @@ function interfaceWithMMGIS() {
             if (!details) {
                 $('#mjs-endpoint-desc').text('Failed to load process details')
                 $form.empty().append('<div class="mjs-empty">Failed to load parameters.</div>')
-                collectPayload = () => ({})
+                collectPayload = () => ({
+                    queue: $queueSelect.val() || '',
+                    tag: $tagInput.val().trim() || '',
+                    inputs: {}
+                })
                 return
             }
 
@@ -1824,10 +1878,14 @@ function interfaceWithMMGIS() {
 
             // Build form from the inputs object
             if (details.inputs && typeof details.inputs === 'object') {
-                collectPayload = buildFormFromInputs($form, details.inputs)
+                collectPayload = buildFormFromInputs($form, details.inputs, $queueSelect, $tagInput)
             } else {
                 $form.empty().append('<div class="mjs-empty">No parameters required.</div>')
-                collectPayload = () => ({})
+                collectPayload = () => ({
+                    queue: $queueSelect.val() || '',
+                    tag: $tagInput.val().trim() || '',
+                    inputs: {}
+                })
             }
         })
     }
@@ -1880,6 +1938,38 @@ function interfaceWithMMGIS() {
             $select.append(`<option value="${proc.processID}">${escapeHTML(label)}</option>`)
         })
         $select.attr('disabled', false)
+    }
+
+    function populateQueueDropdown() {
+        const $select = $queueSelect
+        $select.empty().append('<option value="">Loading queues...</option>')
+        $select.attr('disabled', true)
+
+        // Fetch resources from the MAAP API
+        fetchResources().then((resources) => {
+            $select.empty().append('<option value="">Select queue...</option>')
+
+            if (!resources || resources.length === 0) {
+                console.warn('[MapJobSubmitTool] No resources returned from API')
+                $select.attr('disabled', false)
+                return
+            }
+
+            // Handle both array of strings and array of objects
+            if (Array.isArray(resources)) {
+                resources.forEach((resource) => {
+                    const value = typeof resource === 'string' ? resource : (resource.name || resource.id || String(resource))
+                    const label = typeof resource === 'string' ? resource : (resource.label || resource.name || resource.id || String(resource))
+                    $select.append(`<option value="${escapeHTML(value)}">${escapeHTML(label)}</option>`)
+                })
+            }
+
+            $select.attr('disabled', false)
+        }).catch((err) => {
+            console.warn('[MapJobSubmitTool] Failed to load queues', err)
+            $select.empty().append('<option value="">Failed to load queues</option>')
+            $select.attr('disabled', false)
+        })
     }
 
     function enableSubmit() {
@@ -1949,6 +2039,9 @@ function interfaceWithMMGIS() {
         // Populate algorithm dropdown (already fetched in make())
         populateAlgorithmDropdown()
 
+        // Populate queue dropdown from MAAP API
+        populateQueueDropdown()
+
         // Enable submit button
         $submit.text('Submit').attr('disabled', false)
 
@@ -2000,18 +2093,24 @@ function interfaceWithMMGIS() {
             window.alert('Please select an algorithm, version, and deployer.')
             return
         }
-        const name = $nameInput.val().trim()
-        if (!name) {
-            $nameInput.addClass('mjs-input-error').trigger('focus')
-            $nameWarning.addClass('visible')
+        const queue = $queueSelect.val()
+        if (!queue) {
+            window.alert('Please select a queue.')
+            $queueSelect.trigger('focus')
+            return
+        }
+        const tag = $tagInput.val().trim()
+        if (!tag) {
+            $tagInput.addClass('mjs-input-error').trigger('focus')
+            $tagWarning.addClass('visible')
             return
         }
         const payload = collectPayload()
         $submit.attr('disabled', true).text('Submitting…')
-        Workflows.submit(Workflows.selectedProcessID, payload, name)
+        Workflows.submit(Workflows.selectedProcessID, payload, tag)
             .then(() => {
                 $submit.attr('disabled', false).text('Submit')
-                $nameInput.val('')
+                $tagInput.val('')
             })
             .catch((err) => {
                 $submit.attr('disabled', false).text('Submit')

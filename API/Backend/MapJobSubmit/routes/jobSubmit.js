@@ -147,14 +147,14 @@ router.post("/processes/:processID/execution", async (req, res) => {
     } catch (err) {
         logger(
             "error",
-            "Failed to submit job to OGC API",
+            "Failed to submit job to Workflows API",
             req.originalUrl,
             req,
             err
         );
         res.status(500).send({
             status: "failure",
-            message: "Failed to submit job to OGC API",
+            message: "Failed to submit job to Workflows API",
             error: err.message
         });
     }
@@ -203,14 +203,63 @@ router.get("/jobs", async (req, res) => {
     } catch (err) {
         logger(
             "error",
-            "Failed to fetch jobs details from OGC API",
+            "Failed to fetch jobs details from Workflows API",
             req.originalUrl,
             req,
             err
         );
         res.status(500).send({
             status: "failure",
-            message: "Failed to fetch job details from OGC API",
+            message: "Failed to fetch job details from Workflows API",
+            error: err.message
+        });
+    }
+});
+
+// Proxy endpoint to fetch available algorithm resources/queues
+router.get("/resources", async (req, res) => {
+    const baseUrl = req.query.baseUrl;
+    const proxyTicket = req.headers['x-proxy-ticket'];
+
+    try {
+        const url = baseUrl.replace(/\/ogc\/?$/i, '').replace(/\/+$/, '') + `/mas/algorithm/resource`;
+        logger("info", `Proxying request to: ${url}`, req.originalUrl, req);
+
+        const headers = {
+            'Accept': 'application/json',
+        };
+
+        // Forward x-proxy-ticket header as proxy-ticket to MAAP API
+        if (proxyTicket) {
+            headers['proxy-ticket'] = proxyTicket;
+        } else {
+            logger("warn", `No proxy-ticket header received from client for resources endpoint`, req.originalUrl, req);
+        }
+
+        const response = await fetch(url, {
+            method: 'GET',
+            headers: headers,
+        });
+
+        if (!response.ok) {
+            const responseText = await response.text();
+            logger("error", `MAAP API returned ${response.status}: ${responseText}`, req.originalUrl, req);
+            throw new Error(`MAAP API returned ${response.status}`);
+        }
+
+        const data = await response.json();
+        res.json(data);
+    } catch (err) {
+        logger(
+            "error",
+            "Failed to fetch resources from MAAP API",
+            req.originalUrl,
+            req,
+            err
+        );
+        res.status(500).send({
+            status: "failure",
+            message: "Failed to fetch resources",
             error: err.message
         });
     }
