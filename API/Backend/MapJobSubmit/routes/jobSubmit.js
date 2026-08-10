@@ -219,7 +219,6 @@ router.get("/members/self", async (req, res) => {
 
 // Proxy endpoint to get user jobs
 router.get("/jobs", async (req, res) => {
-    logger("warn", "in the get jobs endpoint")
     logger("info", `ALL request headers: ${JSON.stringify(req.headers)}`, req.originalUrl, req);
     const baseUrl = req.query.baseUrl;
     const proxyTicket = req.headers['x-proxy-ticket'];

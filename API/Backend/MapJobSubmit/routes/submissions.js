@@ -1,6 +1,5 @@
 const express = require("express");
 const router = express.Router();
-const { JobSubmissions } = require("../models/jobSubmissions");
 
 // GET /api/mapjobsubmit-history
 // Returns all job submissions for the authenticated user, ordered newest first.
@@ -10,6 +9,15 @@ router.get("/", async (req, res) => {
     const maapUserId = req.query.maap_user_id;
 
     try {
+        // Lazy load model to avoid initialization order issues
+        const { JobSubmissions } = require("../models/jobSubmissions");
+        if (!JobSubmissions) {
+            return res.status(500).send({
+                status: "failure",
+                message: "JobSubmissions model not initialized yet"
+            });
+        }
+
         const where = { username: req.user };
         // If maap_user_id is provided, filter by it
         if (maapUserId) {
@@ -52,6 +60,15 @@ router.post("/", async (req, res) => {
             .send({ status: "failure", message: "workflow_id is required" });
     }
     try {
+        // Lazy load model to avoid initialization order issues
+        const { JobSubmissions } = require("../models/jobSubmissions");
+        if (!JobSubmissions) {
+            return res.status(500).send({
+                status: "failure",
+                message: "JobSubmissions model not initialized yet"
+            });
+        }
+
         const [row, created] = await JobSubmissions.findOrCreate({
             where: { username: req.user, workflow_id },
             defaults: {

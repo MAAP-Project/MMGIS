@@ -31,7 +31,12 @@ let setup = {
     },
     onceStarted: (s) => {},
     onceSynced: (s) => {
-        if (typeof up === "function") up();
+        logger("info", "MapJobSubmit onceSynced called, initializing model...", "MapJobSubmit");
+        if (typeof up === "function") {
+            up();
+        } else {
+            logger("error", "up() function is not available!", "MapJobSubmit");
+        }
     },
 };
 

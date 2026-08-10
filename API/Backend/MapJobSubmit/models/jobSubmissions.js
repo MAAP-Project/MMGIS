@@ -79,12 +79,17 @@ module.exports = {
     },
     up: async function () {
         const { sequelize } = require("../../../connection");
-        if (!sequelize) return;
+        console.log("[JobSubmissions] up() called, sequelize:", !!sequelize);
+        if (!sequelize) {
+            console.error("[JobSubmissions] sequelize is undefined!");
+            return;
+        }
 
         JobSubmissions = sequelize.define("JobSubmissions", attributes, options);
-
+        
         try {
             await JobSubmissions.sync();
+            console.log("[JobSubmissions] Model synced successfully");
         } catch (err) {
             console.error("Error syncing JobSubmissions model:", err);
         }
