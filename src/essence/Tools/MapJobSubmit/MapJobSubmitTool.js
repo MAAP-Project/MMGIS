@@ -46,11 +46,23 @@ function mmgisFetch(path, init) {
 
 // Returns { [workflow_id]: { endpoint, payload, name, ts } }
 function fetchSubmittedRegistry() {
-    return mmgisFetch('api/workflows-history')
-        .then((r) => r.json())
+    console.log('[MapJobSubmitTool] Fetching submitted registry from DB...')
+    // Include maap_user_id query param to filter by MAAP user
+    const url = Workflows.maapUserId
+        ? `api/mapjobsubmit-history?maap_user_id=${encodeURIComponent(Workflows.maapUserId)}`
+        : 'api/mapjobsubmit-history'
+    return mmgisFetch(url)
+        .then((r) => {
+            console.log('[MapJobSubmitTool] Registry fetch response status:', r.status)
+            return r.json()
+        })
         .then((d) => {
-            if (!d || d.status !== 'success' || !Array.isArray(d.body))
+            console.log('[MapJobSubmitTool] Registry fetch data:', d)
+            if (!d || d.status !== 'success' || !Array.isArray(d.body)) {
+                console.warn('[MapJobSubmitTool] Invalid registry response format:', d)
                 return {}
+            }
+            console.log('[MapJobSubmitTool] Registry has', d.body.length, 'entries')
             const out = {}
             d.body.forEach((row) => {
                 if (!row || !row.workflow_id) return
@@ -63,29 +75,42 @@ function fetchSubmittedRegistry() {
                         : Date.now(),
                 }
             })
+            console.log('[MapJobSubmitTool] Built registry with', Object.keys(out).length, 'jobs')
             return out
         })
-        .catch(() => ({}))
+        .catch((err) => {
+            console.error('[MapJobSubmitTool] Failed to fetch registry:', err)
+            return {}
+        })
 }
 
 function recordSubmittedJob(jobId, endpoint, payload, name) {
-    return mmgisFetch('api/workflows-history', {
+    return mmgisFetch('api/mapjobsubmit-history', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
             workflow_id: jobId,
+            maap_user_id: Workflows.maapUserId || null,
             endpoint,
             payload,
             name: name || '',
         }),
-    }).catch(() => {})
+    })
+        .then((r) => r.json())
+        .then((data) => {
+            if (data && data.status === 'success') {
+                console.log('[MapJobSubmitTool] Job recorded to DB successfully:', jobId)
+                return data
+            }
+            throw new Error('Failed to record job')
+        })
 }
 
 function updateJobName(jobId, name) {
     // Goes through the upsert route (not /rename) so naming a job this user
     // never submitted creates its history row instead of silently updating
     // zero rows.
-    return mmgisFetch('api/workflows-history', {
+    return mmgisFetch('api/mapjobsubmit-history', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ workflow_id: jobId, name: name || '' }),
@@ -114,9 +139,7 @@ function migrateLegacyLocalStorageRegistry() {
         return Promise.resolve()
     }
     if (!parsed || typeof parsed !== 'object') return Promise.resolve()
-    const entries = Object.entries(parsed).filter(
-        ([id]) => !id.startsWith('mock-')
-    )
+    const entries = Object.entries(parsed)
     if (entries.length === 0) {
         try {
             window.localStorage.removeItem(SUBMITTED_STORAGE_KEY)
@@ -187,6 +210,33 @@ function verifyToken() {
         .catch((err) => {
             console.warn('[MapJobSubmitTool] verifyToken failed', err)
             return false
+        })
+}
+
+// Fetch the MAAP user ID from /api/members/self
+// Returns the user ID if successful, null if failed
+function fetchMaapUserId() {
+    const proxyUrl = 'api/mapjobsubmit/members/self?baseUrl=' + encodeURIComponent(Workflows.baseUrl)
+    console.log('[MapJobSubmitTool] Fetching MAAP user ID...')
+    return mmgisFetch(proxyUrl)
+        .then((r) => {
+            if (!r.ok) {
+                console.warn('[MapJobSubmitTool] Failed to fetch user ID:', r.status)
+                return null
+            }
+            return r.json()
+        })
+        .then((data) => {
+            if (!data || !data.id) {
+                console.warn('[MapJobSubmitTool] No user ID in response:', data)
+                return null
+            }
+            console.log('[MapJobSubmitTool] Fetched MAAP user ID:', data.id)
+            return data.id
+        })
+        .catch((err) => {
+            console.warn('[MapJobSubmitTool] fetchMaapUserId failed', err)
+            return null
         })
 }
 
@@ -274,12 +324,14 @@ function isFilePathValue(v) {
     return typeof v === 'string' && v.startsWith('file://')
 }
 
-// Pull a status from either our mock shape (job_status) or the real workflow
-// shape (workflow_status). Always returned lowercase to keep CSS classes
-// consistent.
+// Pull a status from the API response. Handles multiple formats:
+// - MAAP API: { status: "failed" }
+// - Legacy formats: { workflow_status: "...", job_status: "..." }
+// Always returned lowercase to keep CSS classes consistent.
 function readStatus(body) {
+    if (!body) return ''
     return normalizeStatus(
-        (body && (body.workflow_status || body.job_status)) || ''
+        body.status || body.workflow_status || body.job_status || ''
     )
 }
 
@@ -416,10 +468,6 @@ function readError(body) {
     return ''
 }
 
-function trimSlash(u) {
-    return (u || '').replace(/\/+$/, '')
-}
-
 // Build a form from the API's input schema (inputs object from process details).
 // Returns a function that collects the payload.
 function buildFormFromInputs($parent, inputs, $queueSelect, $tagInput) {
@@ -435,7 +483,7 @@ function buildFormFromInputs($parent, inputs, $queueSelect, $tagInput) {
 
     const inputRefs = []
     Object.entries(inputs).forEach(([key, input]) => {
-        const id = `wf-input-${key.replace(/[^A-Za-z0-9_-]/g, '_')}`
+        const id = `mjs-input-${key.replace(/[^A-Za-z0-9_-]/g, '_')}`
         const $field = $('<div class="mjs-field"></div>')
 
         // Determine input type
@@ -520,7 +568,7 @@ function buildForm($parent, fields) {
             inputs.push({ f, $input: null })
             return
         }
-        const id = `wf-field-${f.name.replace(/[^A-Za-z0-9_-]/g, '_')}`
+        const id = `mjs-field-${f.name.replace(/[^A-Za-z0-9_-]/g, '_')}`
         const initial = f.default
         const initialStr = initial != null ? String(initial) : ''
         const $field = $('<div class="mjs-field"></div>')
@@ -957,65 +1005,16 @@ function addLayerForJob(jobId, job) {
 
 // ---- HTTP helpers ----
 
-// TODO this whole function might need to be deleted because only proxying has been working for me 
-function directFetchJSON(url, init) {
-    const headers = {
-        Accept: 'application/json',
-        ...((init && init.headers) || {}),
-    }
-
-    // Add proxy-ticket header if token is available
-    if (Workflows.personalAccessToken) {
-        headers['proxy-ticket'] = Workflows.personalAccessToken
-    }
-
-    return fetch(url, {
-        credentials: 'include',
-        ...(init || {}),
-        headers: headers,
-    }).then(async (res) => {
-        const text = await res.text()
-        let json
-        try {
-            json = text ? JSON.parse(text) : {}
-        } catch (e) {
-            json = { raw: text }
-        }
-        return { ok: res.ok, status: res.status, body: json }
-    })
-}
-
-
-function submitJob(endpointPath, payload) {
-    return directFetchJSON(trimSlash(Workflows.baseUrl) + endpointPath, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload || {}),
-    }).then((r) => {
-        if (!r.ok) {
-            const msg =
-                (r.body && (r.body.detail || r.body.message)) ||
-                `Submit ${r.status}`
-            throw new Error(
-                typeof msg === 'string' ? msg : JSON.stringify(msg)
-            )
-        }
-        return r.body || {}
-    })
-}
-
+// Poll a specific job's status through the MMGIS proxy
 function pollJob(jobId) {
-    return directFetchJSON(
-        trimSlash(Workflows.baseUrl) +
-            '/api/workflows/' +
-            encodeURIComponent(jobId)
-    ).then((r) => (r.ok ? r.body || {} : {}))
-}
-
-function listJobIds() {
-    return directFetchJSON(
-        trimSlash(Workflows.baseUrl) + '/jobs'
-    ).then((r) => (r.ok && Array.isArray(r.body) ? r.body : []))
+    const proxyUrl = `api/mapjobsubmit/jobs/${encodeURIComponent(jobId)}?baseUrl=` + encodeURIComponent(Workflows.baseUrl)
+    return mmgisFetch(proxyUrl)
+        .then((r) => r.json())
+        .then((data) => data || {})
+        .catch((err) => {
+            console.warn('[MapJobSubmitTool] pollJob failed for', jobId, err)
+            return {}
+        })
 }
 
 // ---- Tool ----
@@ -1040,6 +1039,7 @@ const Workflows = {
     onAuthReady: null,
     pollIntervalMs: DEFAULT_POLL_INTERVAL_MS,
     personalAccessToken: null, // Stored in memory only for security
+    maapUserId: null, // MAAP user ID from /api/members/self (stored in memory, not token)
     MMGISInterface: null,
 
     make: function () {
@@ -1067,39 +1067,8 @@ const Workflows = {
             })
         }
 
-        // Hydrate the per-user submitted-job registry asynchronously from
-        // the MMGIS DB. UI renders immediately with whatever in-memory state
-        // we have; rows refresh once the fetch returns. Legacy localStorage
-        // data (from before this was moved server-side) gets one-time
-        // migrated first.
-        migrateLegacyLocalStorageRegistry()
-            .then(fetchSubmittedRegistry)
-            .then((reg) => {
-                Object.keys(reg).forEach((jobId) => {
-                    if (jobId.startsWith('mock-')) return
-                    if (!Workflows.jobs[jobId]) {
-                        Workflows.jobs[jobId] = {
-                            endpoint: reg[jobId].endpoint || '',
-                            payload: reg[jobId].payload,
-                            name: reg[jobId].name || '',
-                            status: 'unknown',
-                            startedAt: reg[jobId].ts || Date.now(),
-                        }
-                    } else {
-                        Workflows.jobs[jobId].payload =
-                            Workflows.jobs[jobId].payload ||
-                            reg[jobId].payload
-                        Workflows.jobs[jobId].endpoint =
-                            Workflows.jobs[jobId].endpoint ||
-                            reg[jobId].endpoint
-                        Workflows.jobs[jobId].name =
-                            Workflows.jobs[jobId].name ||
-                            reg[jobId].name ||
-                            ''
-                    }
-                })
-                Workflows.renderJobs()
-            })
+        // Don't load jobs on initial make() - wait for user to authenticate
+        // Jobs will be loaded when user enters PAT and connects
     },
 
     destroy: function () {
@@ -1114,8 +1083,9 @@ const Workflows = {
             clearInterval(Workflows.authPollTimer)
             Workflows.authPollTimer = null
         }
-        // Clear personal access token from memory
+        // Clear personal access token and MAAP user ID from memory
         Workflows.personalAccessToken = null
+        Workflows.maapUserId = null
     },
 
     // Authenticates using a personal access token by verifying it with the /jobs endpoint
@@ -1130,20 +1100,50 @@ const Workflows = {
         verifyToken().then((isValid) => {
             if (!isValid) {
                 Workflows.personalAccessToken = null
+                Workflows.maapUserId = null
                 window.alert('Invalid personal access token. Please check your token and try again.')
+                // Reset queue dropdown
+                const $queueSelect = $('#mjs-queue-select')
+                if ($queueSelect.length) {
+                    $queueSelect.empty().append('<option value="">Enter PAT to see Queues</option>')
+                    $queueSelect.attr('disabled', true)
+                }
                 if (typeof Workflows._renderUnauthenticated === 'function') {
                     Workflows._renderUnauthenticated()
                 }
                 return
             }
 
-            // Token is valid - render authenticated state
-            if (typeof Workflows._renderAuthenticated === 'function') {
-                Workflows._renderAuthenticated()
-            }
+            // Token is valid - fetch MAAP user ID
+            return fetchMaapUserId().then((userId) => {
+                if (!userId) {
+                    console.error('[MapJobSubmitTool] Failed to fetch MAAP user ID')
+                    Workflows.personalAccessToken = null
+                    Workflows.maapUserId = null
+                    window.alert('Failed to fetch user information. Please try again.')
+                    if (typeof Workflows._renderUnauthenticated === 'function') {
+                        Workflows._renderUnauthenticated()
+                    }
+                    return
+                }
+
+                // Store user ID and render authenticated state
+                Workflows.maapUserId = userId
+                console.log('[MapJobSubmitTool] Authenticated as MAAP user:', userId)
+                if (typeof Workflows._renderAuthenticated === 'function') {
+                    Workflows._renderAuthenticated()
+                }
+            })
         }).catch(() => {
             Workflows.personalAccessToken = null
+            Workflows.maapUserId = null
             window.alert('Failed to verify token. Please try again.')
+            // Reset queue dropdown
+            const $queueSelect = $('#mjs-queue-select')
+            if ($queueSelect.length) {
+                $queueSelect.empty().append('<option value="">Enter PAT to see Queues</option>')
+                $queueSelect.attr('disabled', true)
+            }
             if (typeof Workflows._renderUnauthenticated === 'function') {
                 Workflows._renderUnauthenticated()
             }
@@ -1162,27 +1162,44 @@ const Workflows = {
             .then((data) => {
                 console.log('[MapJobSubmitTool] Job submit response:', data)
                 const jobId = data.jobID
-                if (!jobId) throw new Error('No job_id in response')
+                if (!jobId) {
+                    console.error('[MapJobSubmitTool] No job ID in response:', data)
+                    throw new Error('No job ID in response')
+                }
+                console.log('[MapJobSubmitTool] Job submitted with ID:', jobId)
                 Workflows.jobs[jobId] = {
                     endpoint: String(processID), // store processID as the endpoint identifier
                     payload: payload,
                     name: name || '',
-                    status: readStatus(body) || 'queued',
+                    status: readStatus(data) || 'queued',
                     startedAt: Date.now(),
                 }
-                recordSubmittedJob(jobId, String(processID), payload, name)
                 // Prepend to ordered list and jump to first page so the user
                 // sees their submission immediately.
                 const i = Workflows.jobIds.indexOf(jobId)
                 if (i !== -1) Workflows.jobIds.splice(i, 1)
                 Workflows.jobIds.unshift(jobId)
                 Workflows.page = 0
-                Workflows.ensurePolling()
-                Workflows.renderJobs()
-                return jobId
+                console.log('[MapJobSubmitTool] Recording job to DB:', jobId)
+                // Wait for DB write to complete before rendering to avoid race conditions
+                return recordSubmittedJob(jobId, String(processID), payload, name)
+                    .then(() => {
+                        console.log('[MapJobSubmitTool] Job recorded to DB successfully')
+                        console.log('[MapJobSubmitTool] Rendering jobs list')
+                        Workflows.ensurePolling()
+                        Workflows.renderJobs()
+                        return jobId
+                    })
+                    .catch((err) => {
+                        console.warn('[MapJobSubmitTool] Failed to record to DB, but showing in UI anyway:', err)
+                        // Still render even if DB write fails
+                        Workflows.ensurePolling()
+                        Workflows.renderJobs()
+                        return jobId
+                    })
             })
             .catch((err) => {
-                console.warn('[MapJobSubmitTool] Job submit failed', err)
+                console.error('[MapJobSubmitTool] Job submit failed:', err)
                 return null
             })
     },
@@ -1196,33 +1213,60 @@ const Workflows = {
     },
 
     refreshFromServer: function () {
-        return listJobIds()
-            .then((ids) => {
-                const serverIds = Array.isArray(ids) ? ids.slice() : []
-                // Assume server returns oldest-first; show newest-first.
-                serverIds.reverse()
-                const serverSet = new Set(serverIds)
-                // Local-only ids first (sorted newest-first by our timestamp)
-                // so freshly submitted jobs stay visible even before the
-                // server has them indexed.
-                const localOnly = Object.keys(Workflows.jobs)
-                    .filter((id) => !serverSet.has(id))
+        console.log('[MapJobSubmitTool] refreshFromServer called')
+        // Fetch job history from MMGIS DB (not from MAAP API)
+        return fetchSubmittedRegistry()
+            .then((reg) => {
+                console.log('[MapJobSubmitTool] Fetched registry from DB:', Object.keys(reg).length, 'jobs')
+                console.log('[MapJobSubmitTool] Registry data:', reg)
+                // Merge registry data into Workflows.jobs
+                Object.keys(reg).forEach((jobId) => {
+                    if (!Workflows.jobs[jobId]) {
+                        Workflows.jobs[jobId] = {
+                            endpoint: reg[jobId].endpoint || '',
+                            payload: reg[jobId].payload,
+                            name: reg[jobId].name || '',
+                            status: 'unknown',
+                            startedAt: reg[jobId].ts || Date.now(),
+                        }
+                    } else {
+                        // Update fields that might be missing
+                        Workflows.jobs[jobId].payload =
+                            Workflows.jobs[jobId].payload ||
+                            reg[jobId].payload
+                        Workflows.jobs[jobId].endpoint =
+                            Workflows.jobs[jobId].endpoint ||
+                            reg[jobId].endpoint
+                        Workflows.jobs[jobId].name =
+                            Workflows.jobs[jobId].name ||
+                            reg[jobId].name ||
+                            ''
+                    }
+                })
+
+                // Build jobIds list from what we have in Workflows.jobs
+                Workflows.jobIds = Object.keys(Workflows.jobs)
                     .sort(
                         (a, b) =>
                             (Workflows.jobs[b].startedAt || 0) -
                             (Workflows.jobs[a].startedAt || 0)
                     )
-                Workflows.jobIds = localOnly.concat(serverIds)
-                // Clamp the current page in case the new list is shorter.
+
+                console.log('[MapJobSubmitTool] Built jobIds list:', Workflows.jobIds.length, 'jobs')
+                console.log('[MapJobSubmitTool] Job IDs:', Workflows.jobIds)
+
+                // Clamp the current page in case the new list is shorter
                 const maxPage = Math.max(
                     0,
                     Math.ceil(Workflows.jobIds.length / PAGE_SIZE) - 1
                 )
                 if (Workflows.page > maxPage) Workflows.page = maxPage
-                // Render the id list immediately (rows show as loading…)
-                // so a slow or partially failing detail fetch can't keep
-                // the panel stale.
+
+                console.log('[MapJobSubmitTool] Rendering jobs (before fetch details)')
+                // Render immediately with what we have
                 Workflows.renderJobs()
+
+                // Fetch details for visible jobs
                 return Workflows.fetchPageDetails()
             })
             .then(() => {
@@ -1304,8 +1348,12 @@ const Workflows = {
     },
 
     renderJobs: function () {
-        const $list = $('#mapJobSubmitTool .wf-jobs-list')
-        if ($list.length === 0) return
+        const $list = $('#mapJobSubmitTool .mjs-jobs-list')
+        console.log('[MapJobSubmitTool] renderJobs: found list element:', $list.length > 0)
+        if ($list.length === 0) {
+            console.warn('[MapJobSubmitTool] renderJobs: jobs list element not found!')
+            return
+        }
         $list.empty()
 
         // Bootstrap jobIds from Workflows.jobs the first time renderJobs runs
@@ -1351,11 +1399,11 @@ const Workflows = {
                 : `<span class="mjs-job-id">${escapeHTML(id)}</span>`
             // Inline visibility checkbox on the tile itself once the layer
             // exists — no need to open the drawer just to toggle. The
-            // wf-layer-toggle handler stops propagation, so clicking it
+            // mjs-layer-toggle handler stops propagation, so clicking it
             // doesn't expand/collapse the row.
             const layerExists = L_.layers.data[id] != null
             const tileVisibility = layerExists
-                ? `<div class="mjs-tile-visibility wf-layer-toggle" data-job-id="${escapeHTML(
+                ? `<div class="mjs-tile-visibility mjs-layer-toggle" data-job-id="${escapeHTML(
                       id
                   )}" title="Toggle layer visibility">` +
                   `<div class="mjs-checkbox${
@@ -1573,17 +1621,17 @@ function buildExpandedSection(job, jobId) {
             // toggle that's only live once the layer exists on the map.
             const $row = $('<div class="mjs-map-btn-row"></div>')
             $row.append(
-                `<button type="button" class="mjs-map-btn wf-layer-add" data-job-id="${escapeHTML(
+                `<button type="button" class="mjs-map-btn mjs-layer-add" data-job-id="${escapeHTML(
                     jobId
                 )}"${added ? ' disabled' : ''}>${
                     added ? 'Layer added' : 'Add layer'
                 }</button>`
             )
             // Visibility control styled like the Layers panel's filled
-            // checkbox. The wf-layer-toggle handler no-ops until the layer
+            // checkbox. The mjs-layer-toggle handler no-ops until the layer
             // actually exists on the map.
             $row.append(
-                `<div class="mjs-layer-visibility wf-layer-toggle${
+                `<div class="mjs-layer-visibility mjs-layer-toggle${
                     added ? '' : ' disabled'
                 }" data-job-id="${escapeHTML(jobId)}" title="${
                     added
@@ -1599,7 +1647,7 @@ function buildExpandedSection(job, jobId) {
             $exp.append($row)
             if (added) {
                 $exp.append(
-                    `<button type="button" class="mjs-map-btn wf-layer-remove" data-job-id="${escapeHTML(
+                    `<button type="button" class="mjs-map-btn mjs-layer-remove" data-job-id="${escapeHTML(
                         jobId
                     )}">Remove layer</button>`
                 )
@@ -1678,17 +1726,17 @@ function buildExpandedSection(job, jobId) {
 }
 
 function renderPagination(page, totalPages, total) {
-    const $container = $('#mapJobSubmitTool .wf-pagination')
+    const $container = $('#mapJobSubmitTool .mjs-pagination')
     if ($container.length === 0) return
     $container.empty()
     if (totalPages <= 1) return
     const $prev = $(
-        '<button type="button" class="mjs-page-btn wf-page-prev">Prev</button>'
+        '<button type="button" class="mjs-page-btn mjs-page-prev">Prev</button>'
     )
     if (page === 0) $prev.attr('disabled', true)
     $prev.on('click', () => Workflows.goToPage(Workflows.page - 1))
     const $next = $(
-        '<button type="button" class="mjs-page-btn wf-page-next">Next</button>'
+        '<button type="button" class="mjs-page-btn mjs-page-next">Next</button>'
     )
     if (page >= totalPages - 1) $next.attr('disabled', true)
     $next.on('click', () => Workflows.goToPage(Workflows.page + 1))
@@ -1729,7 +1777,7 @@ function interfaceWithMMGIS() {
 
     $root.append('<div class="mjs-section-label">Queue *</div>')
     const $queueSelect = $('<select id="mjs-queue-select" disabled></select>')
-    $queueSelect.append('<option value="">Loading queues...</option>')
+    $queueSelect.append('<option value="">Enter token to see queues</option>')
     $root.append($queueSelect)
 
     $root.append('<div class="mjs-section-label">Tag *</div>')
@@ -1759,7 +1807,7 @@ function interfaceWithMMGIS() {
     Workflows.renderJobs()
 
     let filterFetchTimer = null
-    $root.find('.wf-jobs-filter').on('input', function () {
+    $root.find('.mjs-jobs-filter').on('input', function () {
         Workflows.filterText = ($(this).val() || '').trim().toLowerCase()
         Workflows.page = 0
         Workflows.renderJobs()
@@ -1771,7 +1819,8 @@ function interfaceWithMMGIS() {
         }, 300)
     })
 
-    $root.find('.wf-refresh-btn').on('click', function () {
+    $root.find('.mjs-refresh-btn').on('click', function () {
+        console.log('[MapJobSubmitTool] Refresh button clicked')
         const $btn = $(this)
         $btn.attr('disabled', true).text('Refreshing…')
         Workflows.refreshFromServer().finally(() => {
@@ -1780,7 +1829,7 @@ function interfaceWithMMGIS() {
     })
 
     // Click-to-expand on job rows. Delegated so it survives re-renders.
-    $root.find('.wf-jobs-list').on('click', '.wf-job-header', function () {
+    $root.find('.mjs-jobs-list').on('click', '.mjs-job-header', function () {
         const id = $(this).attr('data-job-id')
         if (!id) return
         if (Workflows.expandedIds.has(id)) Workflows.expandedIds.delete(id)
@@ -1789,7 +1838,7 @@ function interfaceWithMMGIS() {
     })
 
     // Toggle the inline params grid. Delegated.
-    $root.find('.wf-jobs-list').on('click', '.wf-params-toggle', function (e) {
+    $root.find('.mjs-jobs-list').on('click', '.mjs-params-toggle', function (e) {
         e.preventDefault()
         e.stopPropagation()
         const id = $(this).attr('data-job-id')
@@ -1801,7 +1850,7 @@ function interfaceWithMMGIS() {
     })
 
     // Add a completed job's STAC/vector output as a map layer. Delegated.
-    $root.find('.wf-jobs-list').on('click', '.wf-layer-add', function (e) {
+    $root.find('.mjs-jobs-list').on('click', '.mjs-layer-add', function (e) {
         e.preventDefault()
         e.stopPropagation()
         const id = $(this).attr('data-job-id')
@@ -1813,7 +1862,7 @@ function interfaceWithMMGIS() {
     })
 
     // Remove a run's layer (map + registries + stored config). Delegated.
-    $root.find('.wf-jobs-list').on('click', '.wf-layer-remove', function (e) {
+    $root.find('.mjs-jobs-list').on('click', '.mjs-layer-remove', function (e) {
         e.preventDefault()
         e.stopPropagation()
         const id = $(this).attr('data-job-id')
@@ -1830,7 +1879,7 @@ function interfaceWithMMGIS() {
     })
 
     // Toggle layer visibility for a completed job's output. Delegated.
-    $root.find('.wf-jobs-list').on('click', '.wf-layer-toggle', function (e) {
+    $root.find('.mjs-jobs-list').on('click', '.mjs-layer-toggle', function (e) {
         e.preventDefault()
         e.stopPropagation()
         const id = $(this).attr('data-job-id')
@@ -2009,6 +2058,13 @@ function interfaceWithMMGIS() {
         $section.append($tokenInput).append($connectBtn)
         $authBanner.append($section)
 
+        // Reset queue dropdown to show PAT prompt
+        $queueSelect.empty().append('<option value="">Enter PAT to see Queues</option>')
+        $queueSelect.attr('disabled', true)
+
+        // Hide jobs section until authenticated
+        $('.mjs-jobs').hide()
+
         // Enable submit button even without auth - user can still select algorithms
         // and will get an error on submit if auth is required
         $submit.text('Submit').attr('disabled', false)
@@ -2029,8 +2085,12 @@ function interfaceWithMMGIS() {
         )
         $row.find('.mjs-signout').on('click', function (e) {
             e.preventDefault()
-            // Clear the token from memory
+            // Clear the token and user ID from memory
             Workflows.personalAccessToken = null
+            Workflows.maapUserId = null
+            // Clear jobs
+            Workflows.jobs = {}
+            Workflows.jobIds = []
             renderUnauthenticated()
         })
 
@@ -2045,8 +2105,11 @@ function interfaceWithMMGIS() {
         // Enable submit button
         $submit.text('Submit').attr('disabled', false)
 
-        // Pull existing jobs from the server so the panel isn't empty on
-        // first open of a new session.
+        // Show jobs section now that user is authenticated
+        $('.mjs-jobs').show()
+
+        // Pull existing jobs for this MAAP user from the database
+        console.log('[MapJobSubmitTool] Loading jobs for MAAP user:', Workflows.maapUserId)
         Workflows.refreshFromServer()
     }
 

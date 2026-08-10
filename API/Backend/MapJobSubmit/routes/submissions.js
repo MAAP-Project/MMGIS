@@ -1,0 +1,89 @@
+const express = require("express");
+const router = express.Router();
+const { JobSubmissions } = require("../models/jobSubmissions");
+
+// GET /api/mapjobsubmit-history
+// Returns all job submissions for the authenticated user, ordered newest first.
+// MMGIS uses the username string directly as the identity field; no FK.
+
+router.get("/", async (req, res) => {
+    const maapUserId = req.query.maap_user_id;
+
+    try {
+        const where = { username: req.user };
+        // If maap_user_id is provided, filter by it
+        if (maapUserId) {
+            where.maap_user_id = maapUserId;
+        }
+
+        const rows = await JobSubmissions.findAll({
+            where,
+            order: [["created_on", "DESC"]],
+        });
+        res.send({
+            status: "success",
+            message: "Retrieved job submission history",
+            body: rows.map((r) => ({
+                id: r.id,
+                username: r.username,
+                maap_user_id: r.maap_user_id,
+                workflow_id: r.workflow_id,
+                endpoint: r.endpoint,
+                payload: r.payload,
+                name: r.name,
+                created_on: r.created_on,
+            })),
+        });
+    } catch (err) {
+        console.error("Error fetching job submissions:", err);
+        res.status(500).send({
+            status: "failure",
+            message: "Failed to fetch job submission history",
+            error: err.message,
+        });
+    }
+});
+
+router.post("/", async (req, res) => {
+    const { workflow_id, endpoint, payload, name, maap_user_id } = req.body || {};
+    if (!workflow_id || typeof workflow_id !== "string") {
+        return res
+            .status(400)
+            .send({ status: "failure", message: "workflow_id is required" });
+    }
+    try {
+        const [row, created] = await JobSubmissions.findOrCreate({
+            where: { username: req.user, workflow_id },
+            defaults: {
+                maap_user_id: maap_user_id || null,
+                endpoint: endpoint || null,
+                payload: payload || null,
+                name: name || null,
+            },
+        });
+        if (!created) {
+            // Preserve existing endpoint/payload if we already have them;
+            // only fill blanks or update the name/maap_user_id.
+            const updates = {};
+            if (name !== undefined) updates.name = name || null;
+            if (maap_user_id !== undefined) updates.maap_user_id = maap_user_id || null;
+            if (endpoint && !row.endpoint) updates.endpoint = endpoint;
+            if (payload && !row.payload) updates.payload = payload;
+            if (Object.keys(updates).length > 0) await row.update(updates);
+        }
+        res.send({
+            status: "success",
+            message: created ? "Job submission recorded" : "Job submission updated",
+            body: { id: row.id },
+        });
+    } catch (err) {
+        console.error("Error recording job submission:", err);
+        res.status(500).send({
+            status: "failure",
+            message: "Failed to record job submission",
+            error: err.message,
+        });
+    }
+});
+
+module.exports = router;

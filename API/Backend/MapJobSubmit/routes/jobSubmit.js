@@ -160,6 +160,63 @@ router.post("/processes/:processID/execution", async (req, res) => {
     }
 });
 
+// Proxy endpoint to get current user info from MAAP API
+router.get("/members/self", async (req, res) => {
+    const baseUrl = req.query.baseUrl;
+    const proxyTicket = req.headers['x-proxy-ticket'];
+
+    if (!baseUrl) {
+        return res.status(400).send({
+            status: "failure",
+            message: "baseUrl query parameter is required"
+        });
+    }
+
+    try {
+        // NOTE that members is not an OGC endpoint but we need it to get the username 
+        const url = baseUrl.replace(/\/ogc\/?$/i, '').replace(/\/+$/, '') + `/members/self`;
+        logger("info", `Proxying request to: ${url}`, req.originalUrl, req);
+
+        const headers = {
+            'Accept': 'application/json',
+        };
+
+        // Forward x-proxy-ticket header as proxy-ticket to MAAP API
+        if (proxyTicket) {
+            headers['proxy-ticket'] = proxyTicket;
+        } else {
+            logger("warn", `No proxy-ticket header received from client for members/self endpoint`, req.originalUrl, req);
+        }
+
+        const response = await fetch(url, {
+            method: 'GET',
+            headers: headers,
+        });
+
+        if (!response.ok) {
+            const responseText = await response.text();
+            logger("error", `MAAP API returned ${response.status}: ${responseText}`, req.originalUrl, req);
+            throw new Error(`MAAP API returned ${response.status}`);
+        }
+
+        const data = await response.json();
+        res.json(data);
+    } catch (err) {
+        logger(
+            "error",
+            "Failed to fetch user info from MAAP API",
+            req.originalUrl,
+            req,
+            err
+        );
+        res.status(500).send({
+            status: "failure",
+            message: "Failed to fetch user info",
+            error: err.message
+        });
+    }
+});
+
 // Proxy endpoint to get user jobs
 router.get("/jobs", async (req, res) => {
     logger("warn", "in the get jobs endpoint")
@@ -211,6 +268,68 @@ router.get("/jobs", async (req, res) => {
         res.status(500).send({
             status: "failure",
             message: "Failed to fetch job details from Workflows API",
+            error: err.message
+        });
+    }
+});
+
+// Proxy endpoint to poll a specific job by ID
+router.get("/jobs/:jobId", async (req, res) => {
+    const baseUrl = req.query.baseUrl;
+    const jobId = req.params.jobId;
+    const proxyTicket = req.headers['x-proxy-ticket'];
+
+    if (!baseUrl) {
+        return res.status(400).send({
+            status: "failure",
+            message: "baseUrl query parameter is required"
+        });
+    }
+
+    if (!jobId) {
+        return res.status(400).send({
+            status: "failure",
+            message: "jobId is required"
+        });
+    }
+
+    try {
+        const url = baseUrl.replace(/\/+$/, '') + `/jobs/${encodeURIComponent(jobId)}`;
+        logger("info", `Proxying request to: ${url}`, req.originalUrl, req);
+
+        const headers = {
+            'Accept': 'application/json',
+        };
+
+        // Forward x-proxy-ticket header as proxy-ticket to MAAP API
+        if (proxyTicket) {
+            headers['proxy-ticket'] = proxyTicket;
+        }
+
+        const response = await fetch(url, {
+            method: 'GET',
+            headers: headers,
+        });
+
+        if (!response.ok) {
+            const responseText = await response.text();
+            logger("error", `MAAP API returned ${response.status}: ${responseText}`, req.originalUrl, req);
+            throw new Error(`MAAP API returned ${response.status}`);
+        }
+
+        const data = await response.json();
+        res.json(data);
+    } catch (err) {
+        logger(
+            "error",
+            "Failed to fetch job details from MAAP API",
+            req.originalUrl,
+            req,
+            err
+        );
+        res.status(500).send({
+            status: "failure",
+            message: "Failed to fetch job details",
             error: err.message
         });
     }
