@@ -1281,15 +1281,32 @@ const Workflows = {
             })
     },
 
-    // The job ids currently visible given the text filter (matches tag
-    // or workflow id, case-insensitive).
+    // The job ids currently visible given the text filter (matches tag,
+    // job ID, or process name - case-insensitive partial match).
     getVisibleJobIds: function () {
         const f = Workflows.filterText
         if (!f) return Workflows.jobIds
+        const filterLower = f.toLowerCase()
         return Workflows.jobIds.filter((id) => {
-            if (id.toLowerCase().indexOf(f) !== -1) return true
-            const name = (Workflows.jobs[id] && Workflows.jobs[id].name) || ''
-            return name.toLowerCase().indexOf(f) !== -1
+            const job = Workflows.jobs[id]
+            if (!job) return false
+
+            // Check job ID (partial match)
+            if (id.toLowerCase().includes(filterLower)) return true
+
+            // Check job name/tag (partial match)
+            const name = job.name || ''
+            if (name.toLowerCase().includes(filterLower)) return true
+
+            // Check process name from endpoint (partial match)
+            const endpoint = job.endpoint || ''
+            if (endpoint.toLowerCase().includes(filterLower)) return true
+
+            // Also check the human-friendly process label (partial match)
+            const processLabel = endpointLabel(endpoint).toLowerCase()
+            if (processLabel.includes(filterLower)) return true
+
+            return false
         })
     },
 
