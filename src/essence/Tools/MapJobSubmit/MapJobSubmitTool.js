@@ -468,6 +468,42 @@ function readError(body) {
     return ''
 }
 
+// Check if an input name suggests it should have map selection
+function shouldShowMapSelect(key) {
+    const keyLower = key.toLowerCase().replace(/[-_\s]/g, '')
+
+    // Check for bbox variations
+    if (keyLower === 'bbox' || keyLower === 'boundingbox') {
+        return true
+    }
+
+    // Check for lat/lon variations
+    if (keyLower === 'lat' || keyLower === 'latitude' ||
+        keyLower === 'lon' || keyLower === 'lng' || keyLower === 'longitude') {
+        return true
+    }
+
+    return false
+}
+
+// Get the map selection type for a given input
+function getMapSelectType(key) {
+    const keyLower = key.toLowerCase().replace(/[-_\s]/g, '')
+
+    // Bounding box variations
+    if (keyLower === 'bbox' || keyLower === 'boundingbox') {
+        return 'bbox'
+    }
+
+    // Latitude/longitude variations
+    if (keyLower === 'lat' || keyLower === 'latitude' ||
+        keyLower === 'lon' || keyLower === 'lng' || keyLower === 'longitude') {
+        return 'point'
+    }
+
+    return null
+}
+
 // Build a form from the API's input schema (inputs object from process details).
 // Returns a function that collects the payload.
 function buildFormFromInputs($parent, inputs, $queueSelect, $tagInput) {
@@ -521,7 +557,17 @@ function buildFormFromInputs($parent, inputs, $queueSelect, $tagInput) {
                 .attr('id', id)
                 .attr('placeholder', input.placeholder || '')
                 .val(defaultValue)
-            $field.append($input)
+
+            // Add map select button if applicable
+            if (shouldShowMapSelect(key)) {
+                const $inputWrapper = $('<div class="mjs-input-with-btn"></div>')
+                $inputWrapper.append($input)
+                const $mapBtn = $('<button type="button" class="mjs-map-select-btn" data-input-key="' + escapeHTML(key) + '">Select on Map</button>')
+                $inputWrapper.append($mapBtn)
+                $field.append($inputWrapper)
+            } else {
+                $field.append($input)
+            }
         }
 
         // Description if provided
@@ -1017,6 +1063,108 @@ function pollJob(jobId) {
         })
 }
 
+// ---- Map Selection State ----
+const MapSelection = {
+    active: false,
+    type: null, // 'bbox' or 'point'
+    inputKey: null,
+    $targetInput: null,
+    drawing: null,
+    clickHandler: null,
+
+    start: function(type, inputKey, $input) {
+        this.cancel() // Cancel any existing selection
+        this.active = true
+        this.type = type
+        this.inputKey = inputKey
+        this.$targetInput = $input
+
+        const Map_ = window.mmgisAPI?.getMap?.() || (window.L_ && window.L_.Map_)
+        if (!Map_ || !Map_.map) {
+            console.warn('[MapJobSubmitTool] Map not available for selection')
+            window.alert('Map is not available for selection')
+            this.cancel()
+            return
+        }
+
+        if (type === 'bbox') {
+            // Use Leaflet Draw to draw a rectangle
+            this.drawing = new window.L.Draw.Rectangle(Map_.map, {
+                shapeOptions: {
+                    color: '#ff8800',
+                    weight: 2,
+                    fillOpacity: 0.2
+                }
+            })
+            this.drawing.enable()
+
+            // Listen for the draw:created event
+            const handler = (e) => {
+                const bounds = e.layer.getBounds()
+                const bbox = [
+                    bounds.getWest(),
+                    bounds.getSouth(),
+                    bounds.getEast(),
+                    bounds.getNorth()
+                ].join(',')
+                this.$targetInput.val(bbox)
+                this.cancel()
+            }
+            Map_.map.on('draw:created', handler)
+            this._drawCreatedHandler = handler
+        } else if (type === 'point') {
+            // Listen for a single click on the map
+            this.clickHandler = (e) => {
+                const lat = e.latlng.lat
+                const lon = e.latlng.lng
+
+                // Check if this is for lat or lon specifically
+                const keyLower = inputKey.toLowerCase().replace(/[-_\s]/g, '')
+                if (keyLower === 'lat' || keyLower === 'latitude') {
+                    this.$targetInput.val(lat.toFixed(6))
+                } else if (keyLower === 'lon' || keyLower === 'lng' || keyLower === 'longitude') {
+                    this.$targetInput.val(lon.toFixed(6))
+                } else {
+                    // Generic point - set as "lat,lon"
+                    this.$targetInput.val(`${lat.toFixed(6)},${lon.toFixed(6)}`)
+                }
+                this.cancel()
+            }
+            Map_.map.on('click', this.clickHandler)
+
+            // Change cursor to crosshair
+            Map_.map.getContainer().style.cursor = 'crosshair'
+        }
+    },
+
+    cancel: function() {
+        if (!this.active) return
+
+        const Map_ = window.mmgisAPI?.getMap?.() || (window.L_ && window.L_.Map_)
+        if (Map_ && Map_.map) {
+            if (this.drawing) {
+                this.drawing.disable()
+                this.drawing = null
+            }
+            if (this._drawCreatedHandler) {
+                Map_.map.off('draw:created', this._drawCreatedHandler)
+                this._drawCreatedHandler = null
+            }
+            if (this.clickHandler) {
+                Map_.map.off('click', this.clickHandler)
+                this.clickHandler = null
+            }
+            // Reset cursor
+            Map_.map.getContainer().style.cursor = ''
+        }
+
+        this.active = false
+        this.type = null
+        this.inputKey = null
+        this.$targetInput = null
+    }
+}
+
 // ---- Tool ----
 
 const Workflows = {
@@ -1072,6 +1220,9 @@ const Workflows = {
     },
 
     destroy: function () {
+        // Cancel any active map selection
+        MapSelection.cancel()
+
         if (Workflows.MMGISInterface)
             Workflows.MMGISInterface.separateFromMMGIS()
         Workflows.MMGISInterface = null
@@ -1916,6 +2067,46 @@ function interfaceWithMMGIS() {
         )
     })
 
+    // Handle "Select on Map" button clicks for bbox/lat/lon inputs. Delegated.
+    $root.on('click', '.mjs-map-select-btn', function(e) {
+        e.preventDefault()
+        e.stopPropagation()
+
+        // If already active, cancel the selection
+        if ($(this).hasClass('mjs-map-select-active')) {
+            MapSelection.cancel()
+            return
+        }
+
+        const inputKey = $(this).attr('data-input-key')
+        if (!inputKey) return
+
+        const $input = $(this).siblings('input')
+        if (!$input.length) return
+
+        const selectType = getMapSelectType(inputKey)
+        if (!selectType) return
+
+        MapSelection.start(selectType, inputKey, $input)
+
+        // Update button text to indicate active selection
+        $(this).text('Click to cancel').addClass('mjs-map-select-active')
+
+        // Restore button text when selection is cancelled/completed
+        const originalBtn = $(this)
+        const restoreBtn = () => {
+            originalBtn.text('Select on Map').removeClass('mjs-map-select-active')
+        }
+
+        // Poll to detect when selection is cancelled
+        const checkInterval = setInterval(() => {
+            if (!MapSelection.active) {
+                restoreBtn()
+                clearInterval(checkInterval)
+            }
+        }, 100)
+    })
+
     let collectPayload = () => ({})
 
     function renderSelectedProcess() {
@@ -2177,10 +2368,18 @@ function interfaceWithMMGIS() {
     })
 
     $submit.on('click', function () {
+        // Check authentication first
+        if (!Workflows.personalAccessToken) {
+            window.alert('Please enter your personal access token to connect before submitting a job.')
+            return
+        }
+
+        // Then check if algorithm is selected
         if (!Workflows.selectedProcessID) {
             window.alert('Please select an algorithm, version, and deployer.')
             return
         }
+
         const queue = $queueSelect.val()
         if (!queue) {
             window.alert('Please select a queue.')

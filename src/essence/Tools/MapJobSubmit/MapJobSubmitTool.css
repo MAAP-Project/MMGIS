@@ -681,3 +681,43 @@
     color: #888;
     margin: 4px 0;
 }
+
+/* Map selection buttons */
+#mapJobSubmitTool .mjs-input-with-btn {
+    display: flex;
+    gap: 4px;
+    align-items: stretch;
+}
+
+#mapJobSubmitTool .mjs-input-with-btn input {
+    flex: 1;
+}
+
+#mapJobSubmitTool .mjs-map-select-btn {
+    background: rgba(0, 169, 224, 0.15);
+    color: #00A9E0;
+    border: 1px solid rgba(0, 169, 224, 0.4);
+    padding: 4px 8px;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: all 0.2s ease;
+}
+
+#mapJobSubmitTool .mjs-map-select-btn:hover {
+    background: rgba(0, 169, 224, 0.25);
+    border-color: rgba(0, 169, 224, 0.6);
+}
+
+#mapJobSubmitTool .mjs-map-select-btn.mjs-map-select-active {
+    background: rgba(255, 183, 77, 0.15);
+    color: #ffb74d;
+    border-color: rgba(255, 183, 77, 0.4);
+}
+
+#mapJobSubmitTool .mjs-map-select-btn.mjs-map-select-active:hover {
+    background: rgba(255, 183, 77, 0.25);
+    border-color: rgba(255, 183, 77, 0.6);
+}
