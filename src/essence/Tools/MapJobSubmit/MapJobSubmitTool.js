@@ -1,6 +1,7 @@
 import $ from 'jquery'
 import './MapJobSubmitTool.css'
 import L_ from '../../Basics/Layers_/Layers_'
+import Map_ from '../../Basics/Map_/Map_'
 import ToolController_ from '../../Basics/ToolController_/ToolController_'
 
 // mmgisAPI is intentionally accessed via window.mmgisAPI at call time rather
@@ -13,6 +14,36 @@ const DEFAULT_POLL_INTERVAL_MS = 30000
 const SUBMITTED_STORAGE_KEY = 'mmgis.workflows.submitted'
 const SUBMITTED_MAX_ENTRIES = 100
 const PAGE_SIZE = 10
+
+// Input name variations for map-based parameters
+const LAT_VARIATIONS = ['lat', 'latitude']
+const LON_VARIATIONS = ['lon', 'lng', 'longitude']
+const BBOX_VARIATIONS = ['bbox', 'boundingbox']
+
+// Normalize input key by removing spaces, hyphens, underscores and converting to lowercase
+function normalizeInputKey(key) {
+    return String(key).toLowerCase().replace(/[-_\s]/g, '')
+}
+
+// Check if an input should be treated as numeric based on its key or type
+function shouldBeNumeric(key, type) {
+    if (!type) type = ''
+    const typeLower = type.toLowerCase()
+
+    // Explicit numeric types
+    if (typeLower === 'number' || typeLower === 'integer' ||
+        typeLower === 'float' || typeLower === 'double') {
+        return true
+    }
+
+    // Lat/lon are always numeric
+    const normalized = normalizeInputKey(key)
+    if (LAT_VARIATIONS.includes(normalized) || LON_VARIATIONS.includes(normalized)) {
+        return true
+    }
+
+    return false
+}
 
 // Per-user job history is stored server-side in the MMGIS DB
 // (workflow_submissions table). All three helpers below talk to that API.
@@ -470,16 +501,15 @@ function readError(body) {
 
 // Check if an input name suggests it should have map selection
 function shouldShowMapSelect(key) {
-    const keyLower = key.toLowerCase().replace(/[-_\s]/g, '')
+    const normalized = normalizeInputKey(key)
 
     // Check for bbox variations
-    if (keyLower === 'bbox' || keyLower === 'boundingbox') {
+    if (BBOX_VARIATIONS.includes(normalized)) {
         return true
     }
 
     // Check for lat/lon variations
-    if (keyLower === 'lat' || keyLower === 'latitude' ||
-        keyLower === 'lon' || keyLower === 'lng' || keyLower === 'longitude') {
+    if (LAT_VARIATIONS.includes(normalized) || LON_VARIATIONS.includes(normalized)) {
         return true
     }
 
@@ -488,16 +518,15 @@ function shouldShowMapSelect(key) {
 
 // Get the map selection type for a given input
 function getMapSelectType(key) {
-    const keyLower = key.toLowerCase().replace(/[-_\s]/g, '')
+    const normalized = normalizeInputKey(key)
 
     // Bounding box variations
-    if (keyLower === 'bbox' || keyLower === 'boundingbox') {
+    if (BBOX_VARIATIONS.includes(normalized)) {
         return 'bbox'
     }
 
     // Latitude/longitude variations
-    if (keyLower === 'lat' || keyLower === 'latitude' ||
-        keyLower === 'lon' || keyLower === 'lng' || keyLower === 'longitude') {
+    if (LAT_VARIATIONS.includes(normalized) || LON_VARIATIONS.includes(normalized)) {
         return 'point'
     }
 
@@ -588,7 +617,19 @@ function buildFormFromInputs($parent, inputs, $queueSelect, $tagInput) {
                 inputs[key] = $input.is(':checked')
             } else {
                 const val = $input.val()
-                if (val !== '') inputs[key] = val
+                if (val !== '') {
+                    // Convert to number if it's a numeric input type or lat/lon
+                    if (shouldBeNumeric(key, type)) {
+                        const num = parseFloat(val)
+                        if (!isNaN(num)) {
+                            inputs[key] = num
+                        } else {
+                            inputs[key] = val // Keep as string if conversion fails
+                        }
+                    } else {
+                        inputs[key] = val
+                    }
+                }
             }
         })
         return {
@@ -1063,6 +1104,180 @@ function pollJob(jobId) {
         })
 }
 
+// ---- Map Input Display State ----
+const MapInputDisplay = {
+    layers: {}, // jobId -> array of Leaflet layers
+
+    show: function(jobId, payload) {
+        // Clear any existing layers for this job
+        this.clear(jobId)
+
+        // Access the map through the imported Map_ module (same as Draw tool)
+        if (!Map_ || !Map_.map) {
+            console.warn('[MapJobSubmitTool] Map not available')
+            window.alert('Map is not available')
+            return
+        }
+
+        const map = Map_.map
+        const L = window.L
+        if (!L) {
+            console.warn('[MapJobSubmitTool] Leaflet not available')
+            window.alert('Leaflet library is not available')
+            return
+        }
+
+        // Check if map has a valid CRS
+        if (!map.options || !map.options.crs) {
+            console.warn('[MapJobSubmitTool] Map CRS not initialized')
+            window.alert('Map projection system is not ready. Please try again.')
+            return
+        }
+
+        const layers = []
+
+        // Check if payload has an 'inputs' wrapper (new format with queue/tag/inputs)
+        const inputsToUse = payload.inputs || payload
+
+        // Extract lat, lon, and bbox from payload
+        let lat = null
+        let lon = null
+        let bbox = null
+
+        Object.entries(inputsToUse).forEach(([key, value]) => {
+            const normalized = normalizeInputKey(key)
+            if (LAT_VARIATIONS.includes(normalized)) {
+                lat = parseFloat(value)
+            } else if (LON_VARIATIONS.includes(normalized)) {
+                lon = parseFloat(value)
+            } else if (BBOX_VARIATIONS.includes(normalized)) {
+                bbox = value
+            }
+        })
+
+        // Draw point if we have lat and lon (check for null/undefined first!)
+        if (lat != null && lon != null && !isNaN(lat) && !isNaN(lon)) {
+            console.log('[MapJobSubmitTool] Attempting to display point:', { lat, lon })
+            try {
+                const marker = L.circleMarker([lat, lon], {
+                    radius: 8,
+                    color: '#00A9E0',
+                    fillColor: '#00A9E0',
+                    fillOpacity: 0.6,
+                    weight: 2
+                }).addTo(map)
+                marker.bindPopup(`Job Input<br>Lat: ${lat.toFixed(6)}<br>Lon: ${lon.toFixed(6)}`)
+                layers.push(marker)
+            } catch (err) {
+                console.error('[MapJobSubmitTool] Failed to add point marker:', err)
+                window.alert(`Failed to display point on map.\n\nCoordinates: ${lat}, ${lon}\nError: ${err.message}`)
+                return
+            }
+        } else if (lat != null && !isNaN(lat)) {
+            // Only lat - draw horizontal line across viewport
+            console.log('[MapJobSubmitTool] Attempting to display latitude line:', lat)
+            try {
+                const bounds = map.getBounds()
+                const west = bounds.getWest()
+                const east = bounds.getEast()
+                const line = L.polyline([[lat, west], [lat, east]], {
+                    color: '#00A9E0',
+                    weight: 2,
+                    dashArray: '5, 5'
+                }).addTo(map)
+                line.bindPopup(`Job Input<br>Latitude: ${lat.toFixed(6)}`)
+                layers.push(line)
+            } catch (err) {
+                console.error('[MapJobSubmitTool] Failed to add latitude line:', err)
+                window.alert('Failed to display latitude line on map.')
+                return
+            }
+        } else if (lon != null && !isNaN(lon)) {
+            // Only lon - draw vertical line across viewport
+            console.log('[MapJobSubmitTool] Attempting to display longitude line:', lon)
+            try {
+                const bounds = map.getBounds()
+                const south = bounds.getSouth()
+                const north = bounds.getNorth()
+                const line = L.polyline([[south, lon], [north, lon]], {
+                    color: '#00A9E0',
+                    weight: 2,
+                    dashArray: '5, 5'
+                }).addTo(map)
+                line.bindPopup(`Job Input<br>Longitude: ${lon.toFixed(6)}`)
+                layers.push(line)
+            } catch (err) {
+                console.error('[MapJobSubmitTool] Failed to add longitude line:', err)
+                window.alert('Failed to display longitude line on map.')
+                return
+            }
+        }
+
+        // Draw bounding box if we have it
+        if (bbox) {
+            console.log('[MapJobSubmitTool] Attempting to display bbox:', bbox)
+            const parts = String(bbox).split(',').map(s => parseFloat(s.trim()))
+            if (parts.length === 4 && parts.every(n => !isNaN(n))) {
+                const [west, south, east, north] = parts
+                console.log('[MapJobSubmitTool] Drawing bbox:', { west, south, east, north })
+                try {
+                    const rect = L.rectangle([[south, west], [north, east]], {
+                        color: '#ffb74d',
+                        fillColor: '#ffb74d',
+                        fillOpacity: 0.15,
+                        weight: 2
+                    }).addTo(map)
+                    rect.bindPopup(`Job Input<br>Bounding Box:<br>W: ${west}, S: ${south}<br>E: ${east}, N: ${north}`)
+                    layers.push(rect)
+
+                    // Zoom to bbox
+                    map.fitBounds(rect.getBounds(), { padding: [50, 50] })
+                } catch (err) {
+                    console.error('[MapJobSubmitTool] Failed to add bounding box:', err)
+                    console.error('[MapJobSubmitTool] Error stack:', err.stack)
+                    window.alert(`Failed to display bounding box on map.\n\nBbox: ${bbox}\nError: ${err.message}`)
+                    return
+                }
+            }
+        }
+
+        // If we drew anything, store the layers and zoom to fit all
+        if (layers.length > 0) {
+            this.layers[jobId] = layers
+
+            // If we have multiple layers, create a group and zoom to all
+            if (layers.length > 1) {
+                const group = L.featureGroup(layers)
+                map.fitBounds(group.getBounds(), { padding: [50, 50] })
+            } else if (layers.length === 1 && !bbox) {
+                // For single point or line, just pan to it (don't zoom)
+                if (!isNaN(lat) && !isNaN(lon)) {
+                    map.panTo([lat, lon])
+                }
+            }
+        } else {
+            window.alert('No valid map inputs found in this job.')
+        }
+    },
+
+    clear: function(jobId) {
+        if (this.layers[jobId]) {
+            if (Map_ && Map_.map) {
+                this.layers[jobId].forEach(layer => {
+                    Map_.map.removeLayer(layer)
+                })
+            }
+            delete this.layers[jobId]
+        }
+    },
+
+    clearAll: function() {
+        Object.keys(this.layers).forEach(jobId => {
+            this.clear(jobId)
+        })
+    }
+}
+
 // ---- Map Selection State ----
 const MapSelection = {
     active: false,
@@ -1079,7 +1294,6 @@ const MapSelection = {
         this.inputKey = inputKey
         this.$targetInput = $input
 
-        const Map_ = window.mmgisAPI?.getMap?.() || (window.L_ && window.L_.Map_)
         if (!Map_ || !Map_.map) {
             console.warn('[MapJobSubmitTool] Map not available for selection')
             window.alert('Map is not available for selection')
@@ -1087,9 +1301,18 @@ const MapSelection = {
             return
         }
 
+        const map = Map_.map
+        const L = window.L
+        if (!L) {
+            console.warn('[MapJobSubmitTool] Leaflet not available')
+            window.alert('Leaflet library is not available')
+            this.cancel()
+            return
+        }
+
         if (type === 'bbox') {
             // Use Leaflet Draw to draw a rectangle
-            this.drawing = new window.L.Draw.Rectangle(Map_.map, {
+            this.drawing = new L.Draw.Rectangle(map, {
                 shapeOptions: {
                     color: '#ff8800',
                     weight: 2,
@@ -1110,7 +1333,7 @@ const MapSelection = {
                 this.$targetInput.val(bbox)
                 this.cancel()
             }
-            Map_.map.on('draw:created', handler)
+            map.on('draw:created', handler)
             this._drawCreatedHandler = handler
         } else if (type === 'point') {
             // Listen for a single click on the map
@@ -1130,32 +1353,32 @@ const MapSelection = {
                 }
                 this.cancel()
             }
-            Map_.map.on('click', this.clickHandler)
+            map.on('click', this.clickHandler)
 
             // Change cursor to crosshair
-            Map_.map.getContainer().style.cursor = 'crosshair'
+            map.getContainer().style.cursor = 'crosshair'
         }
     },
 
     cancel: function() {
         if (!this.active) return
 
-        const Map_ = window.mmgisAPI?.getMap?.() || (window.L_ && window.L_.Map_)
         if (Map_ && Map_.map) {
+            const map = Map_.map
             if (this.drawing) {
                 this.drawing.disable()
                 this.drawing = null
             }
             if (this._drawCreatedHandler) {
-                Map_.map.off('draw:created', this._drawCreatedHandler)
+                map.off('draw:created', this._drawCreatedHandler)
                 this._drawCreatedHandler = null
             }
             if (this.clickHandler) {
-                Map_.map.off('click', this.clickHandler)
+                map.off('click', this.clickHandler)
                 this.clickHandler = null
             }
             // Reset cursor
-            Map_.map.getContainer().style.cursor = ''
+            map.getContainer().style.cursor = ''
         }
 
         this.active = false
@@ -1222,6 +1445,9 @@ const Workflows = {
     destroy: function () {
         // Cancel any active map selection
         MapSelection.cancel()
+
+        // Clear all map input displays
+        MapInputDisplay.clearAll()
 
         if (Workflows.MMGISInterface)
             Workflows.MMGISInterface.separateFromMMGIS()
@@ -1595,37 +1821,7 @@ const Workflows = {
                     )}">${escapeHTML(endpointLabel(job.endpoint))}</div>`
                 )
             }
-            if (job.payload && Object.keys(job.payload).length > 0) {
-                // TEMPORARY: file:// values are stripped from display (still
-                // sent to the API — see comment on ENDPOINTS).
-                const displayEntries = Object.entries(job.payload).filter(
-                    ([, v]) => !isFilePathValue(v)
-                )
-                if (displayEntries.length > 0) {
-                    const paramsOpen = Workflows.paramsExpandedIds.has(id)
-                    $div.append(
-                        `<div class="mjs-params-toggle" data-job-id="${escapeHTML(
-                            id
-                        )}">${paramsOpen ? '▼' : '▶'} parameters (${
-                            displayEntries.length
-                        })</div>`
-                    )
-                    if (paramsOpen) {
-                        const $params = $('<div class="mjs-job-params"></div>')
-                        displayEntries.forEach(([k, v]) => {
-                            $params.append(
-                                `<span class="mjs-param-key">${escapeHTML(k)}</span>`
-                            )
-                            $params.append(
-                                `<span class="mjs-param-val" title="${escapeHTML(
-                                    String(v == null ? '' : v)
-                                )}">${escapeHTML(formatParamValue(v))}</span>`
-                            )
-                        })
-                        $div.append($params)
-                    }
-                }
-            }
+            // Parameters are shown in the expanded section only, not in the collapsed tile view
             if (statusClass === 'running' && job.currentStage) {
                 $div.append(
                     `<div class="mjs-job-stage">stage: ${escapeHTML(
@@ -1723,42 +1919,25 @@ function formatLocale(iso) {
     return d.toLocaleString()
 }
 
+// Check if job has any inputs that can be displayed on map
+function hasMapDisplayableInputs(payload) {
+    if (!payload || typeof payload !== 'object') return false
+
+    // Check if payload has an 'inputs' wrapper (new format with queue/tag/inputs)
+    const inputsToCheck = payload.inputs || payload
+
+    return Object.keys(inputsToCheck).some(key => shouldShowMapSelect(key))
+}
+
 function buildExpandedSection(job, jobId) {
     const $exp = $('<div class="mjs-job-expanded"></div>')
 
-    // Workflow uuid — hidden on named tiles' headers, so surface it here.
+    // Workflow uuid — always shown at top of expanded section
     $exp.append(
         `<div class="mjs-exp-uuid" title="Workflow id">${escapeHTML(
             jobId
         )}</div>`
     )
-
-    // Name — editable. Locally-stored (the API has no concept of job names).
-    $exp.append('<div class="mjs-exp-label">Name</div>')
-    const $nameRow = $('<div class="mjs-exp-name-row"></div>')
-    const $nameInput = $(
-        `<input type="text" class="mjs-exp-name-input" placeholder="e.g. SF Sept-15 forecast" value="${escapeHTML(
-            job.name || ''
-        )}" />`
-    )
-    const $nameSave = $(
-        '<button type="button" class="mjs-exp-name-save">Save</button>'
-    )
-    $nameSave.on('click', function () {
-        const newName = $nameInput.val().trim()
-        // Write onto the CURRENT job object — polling replaces
-        // Workflows.jobs[id] wholesale, so the reference this expanded view
-        // captured at render time may be stale.
-        if (Workflows.jobs[jobId]) Workflows.jobs[jobId].name = newName
-        updateJobName(jobId, newName)
-        syncLayerName(jobId)
-        Workflows.renderJobs()
-    })
-    $nameInput.on('keydown', function (e) {
-        if (e.key === 'Enter') $nameSave.trigger('click')
-    })
-    $nameRow.append($nameInput).append($nameSave)
-    $exp.append($nameRow)
 
     // Submitted params — only if we know them (locally submitted or hydrated
     // from the persistent registry). TEMPORARY: file:// values stripped.
@@ -1773,6 +1952,17 @@ function buildExpandedSection(job, jobId) {
             const $pre = $('<pre class="mjs-exp-json"></pre>')
             $pre.text(JSON.stringify(display, null, 2))
             $exp.append($pre)
+
+            // Add "View Inputs on Map" button if job has mappable inputs
+            if (hasMapDisplayableInputs(job.payload)) {
+                const isShowing = MapInputDisplay.layers[jobId] && MapInputDisplay.layers[jobId].length > 0
+                const $viewBtn = $(
+                    `<button type="button" class="mjs-view-inputs-btn" data-job-id="${escapeHTML(jobId)}">${
+                        isShowing ? 'Hide Inputs from Map' : 'View Inputs on Map'
+                    }</button>`
+                )
+                $exp.append($viewBtn)
+            }
         }
     } else if (job.fromServer) {
         $exp.append(
@@ -2008,20 +2198,15 @@ function interfaceWithMMGIS() {
     $root.find('.mjs-jobs-list').on('click', '.mjs-job-header', function () {
         const id = $(this).attr('data-job-id')
         if (!id) return
-        if (Workflows.expandedIds.has(id)) Workflows.expandedIds.delete(id)
-        else Workflows.expandedIds.add(id)
-        Workflows.renderJobs()
-    })
 
-    // Toggle the inline params grid. Delegated.
-    $root.find('.mjs-jobs-list').on('click', '.mjs-params-toggle', function (e) {
-        e.preventDefault()
-        e.stopPropagation()
-        const id = $(this).attr('data-job-id')
-        if (!id) return
-        if (Workflows.paramsExpandedIds.has(id))
-            Workflows.paramsExpandedIds.delete(id)
-        else Workflows.paramsExpandedIds.add(id)
+        // If collapsing, clear any map inputs being displayed
+        if (Workflows.expandedIds.has(id)) {
+            Workflows.expandedIds.delete(id)
+            MapInputDisplay.clear(id)
+        } else {
+            Workflows.expandedIds.add(id)
+        }
+
         Workflows.renderJobs()
     })
 
@@ -2065,6 +2250,26 @@ function interfaceWithMMGIS() {
         Promise.resolve(L_.toggleLayer(layerObj)).then(() =>
             Workflows.renderJobs()
         )
+    })
+
+    // View job inputs on map (lat/lon/bbox). Delegated.
+    $root.find('.mjs-jobs-list').on('click', '.mjs-view-inputs-btn', function (e) {
+        e.preventDefault()
+        e.stopPropagation()
+        const id = $(this).attr('data-job-id')
+        if (!id) return
+        const job = Workflows.jobs[id]
+        if (!job || !job.payload) return
+
+        // Toggle: if already showing, clear; otherwise show
+        if (MapInputDisplay.layers[id] && MapInputDisplay.layers[id].length > 0) {
+            MapInputDisplay.clear(id)
+        } else {
+            MapInputDisplay.show(id, job.payload)
+        }
+
+        // Re-render to update button text
+        Workflows.renderJobs()
     })
 
     // Handle "Select on Map" button clicks for bbox/lat/lon inputs. Delegated.

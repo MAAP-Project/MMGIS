@@ -721,3 +721,23 @@
     background: rgba(255, 183, 77, 0.25);
     border-color: rgba(255, 183, 77, 0.6);
 }
+
+/* View Inputs on Map button */
+#mapJobSubmitTool .mjs-view-inputs-btn {
+    width: 100%;
+    background: rgba(0, 169, 224, 0.15);
+    color: #00A9E0;
+    border: 1px solid rgba(0, 169, 224, 0.4);
+    padding: 6px 8px;
+    margin-top: 6px;
+    cursor: pointer;
+    text-transform: uppercase;
+    font-size: 11px;
+    letter-spacing: 0.04em;
+    transition: all 0.2s ease;
+}
+
+#mapJobSubmitTool .mjs-view-inputs-btn:hover {
+    background: rgba(0, 169, 224, 0.25);
+    border-color: rgba(0, 169, 224, 0.6);
+}
