@@ -1546,6 +1546,14 @@ function formatParamValue(v) {
         if (v.length > 60) return v.slice(0, 12) + '…' + v.slice(-30)
         return v
     }
+    if (typeof v === 'object') {
+        // Format objects as JSON for better readability
+        try {
+            return JSON.stringify(v)
+        } catch (e) {
+            return '[object]'
+        }
+    }
     return String(v)
 }
 
