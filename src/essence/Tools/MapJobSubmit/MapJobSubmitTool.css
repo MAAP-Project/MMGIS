@@ -484,6 +484,28 @@
     filter: none;
 }
 
+#mapJobSubmitTool .mjs-remove-job-btn {
+    width: 100%;
+    background: transparent;
+    color: #ef5350;
+    border: 1px solid #5c3a3a;
+    padding: 6px;
+    margin-top: 8px;
+    cursor: pointer;
+    text-transform: uppercase;
+    font-size: 11px;
+    letter-spacing: 0.04em;
+}
+
+#mapJobSubmitTool .mjs-remove-job-btn:hover:not(:disabled) {
+    background: rgba(239, 83, 80, 0.08);
+}
+
+#mapJobSubmitTool .mjs-remove-job-btn:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
 /* Visibility control — mirrors the Layers panel's filled checkbox look
    (#layersTool .checkbox/.checkbox.on are panel-scoped, so restated here). */
 #mapJobSubmitTool .mjs-layer-visibility {

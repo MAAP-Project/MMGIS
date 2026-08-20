@@ -151,6 +151,24 @@ function updateJobName(jobId, name) {
     }).catch(() => {})
 }
 
+function deleteJobFromDatabase(jobId) {
+    return mmgisFetch(`api/mapjobsubmit-history/${encodeURIComponent(jobId)}`, {
+        method: 'DELETE',
+    })
+        .then((r) => r.json())
+        .then((data) => {
+            if (data && data.status === 'success') {
+                console.log('[MapJobSubmitTool] Job deleted from DB successfully:', jobId)
+                return data
+            }
+            throw new Error(data.message || 'Failed to delete job')
+        })
+        .catch((err) => {
+            console.error('[MapJobSubmitTool] Failed to delete job from DB:', err)
+            throw err
+        })
+}
+
 // One-time migration from the old localStorage registry into the new
 // DB-backed store. After successful upload, the localStorage key is cleared
 // so we don't re-migrate every load. If MMGIS is unreachable, the legacy
@@ -2125,6 +2143,14 @@ function buildExpandedSection(job, jobId) {
         }
     }
 
+    // Remove Job button - always shown at the bottom
+    $exp.append('<div class="mjs-exp-label" style="margin-top: 20px;">Actions</div>')
+    $exp.append(
+        `<button type="button" class="mjs-remove-job-btn" data-job-id="${escapeHTML(
+            jobId
+        )}">Remove Job</button>`
+    )
+
     return $exp
 }
 
@@ -2413,6 +2439,50 @@ function interfaceWithMMGIS() {
 
         // Re-render to update button text
         Workflows.renderJobs()
+    })
+
+    // Remove job from MMGIS database (not from MAAP). Delegated.
+    $root.find('.mjs-jobs-list').on('click', '.mjs-remove-job-btn', function (e) {
+        e.preventDefault()
+        e.stopPropagation()
+        const id = $(this).attr('data-job-id')
+        if (!id) return
+
+        if (!window.confirm('This will delete the job from this MMGIS instance, not your MAAP account. You can readd this job later with the Import Job button.')) {
+            return
+        }
+
+        const $btn = $(this)
+        $btn.attr('disabled', true).text('Removing...')
+
+        // Delete from database
+        deleteJobFromDatabase(id)
+            .then(() => {
+                // Remove from local state
+                delete Workflows.jobs[id]
+                const idx = Workflows.jobIds.indexOf(id)
+                if (idx !== -1) {
+                    Workflows.jobIds.splice(idx, 1)
+                }
+
+                // Clear any map displays
+                MapInputDisplay.clear(id)
+
+                // Remove layer if it exists
+                if (L_.layers.data[id]) {
+                    const job = { layerAdded: true }
+                    removeLayerForJob(id, job).then(() => {
+                        Workflows.renderJobs()
+                    })
+                } else {
+                    Workflows.renderJobs()
+                }
+            })
+            .catch((err) => {
+                console.error('[MapJobSubmitTool] Failed to remove job:', err)
+                window.alert(`Failed to remove job: ${err.message}`)
+                $btn.attr('disabled', false).text('Remove Job')
+            })
     })
 
     // Handle "Select on Map" button clicks for bbox/lat/lon inputs. Delegated.

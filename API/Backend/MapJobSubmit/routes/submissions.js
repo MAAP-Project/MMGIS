@@ -103,4 +103,56 @@ router.post("/", async (req, res) => {
     }
 });
 
+// DELETE /api/mapjobsubmit-history/:workflowId
+// Deletes a job submission from the MMGIS database (not from MAAP)
+router.delete("/:workflowId", async (req, res) => {
+    const workflowId = req.params.workflowId;
+
+    if (!workflowId) {
+        return res.status(400).send({
+            status: "failure",
+            message: "workflowId is required"
+        });
+    }
+
+    try {
+        // Lazy load model to avoid initialization order issues
+        const { JobSubmissions } = require("../models/jobSubmissions");
+        if (!JobSubmissions) {
+            return res.status(500).send({
+                status: "failure",
+                message: "JobSubmissions model not initialized yet"
+            });
+        }
+
+        // Delete the job submission for this user and workflow_id
+        const deleted = await JobSubmissions.destroy({
+            where: {
+                username: req.user,
+                workflow_id: workflowId
+            }
+        });
+
+        if (deleted === 0) {
+            return res.status(404).send({
+                status: "failure",
+                message: "Job submission not found"
+            });
+        }
+
+        res.send({
+            status: "success",
+            message: "Job submission deleted",
+            body: { workflow_id: workflowId }
+        });
+    } catch (err) {
+        console.error("Error deleting job submission:", err);
+        res.status(500).send({
+            status: "failure",
+            message: "Failed to delete job submission",
+            error: err.message
+        });
+    }
+});
+
 module.exports = router;
