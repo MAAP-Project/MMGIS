@@ -276,6 +276,7 @@ router.get("/jobs", async (req, res) => {
 router.get("/jobs/:jobId", async (req, res) => {
     const baseUrl = req.query.baseUrl;
     const jobId = req.params.jobId;
+    const getJobDetails = req.query.getJobDetails;
     const proxyTicket = req.headers['x-proxy-ticket'];
 
     if (!baseUrl) {
@@ -293,7 +294,13 @@ router.get("/jobs/:jobId", async (req, res) => {
     }
 
     try {
-        const url = baseUrl.replace(/\/+$/, '') + `/jobs/${encodeURIComponent(jobId)}`;
+        let url = baseUrl.replace(/\/+$/, '') + `/jobs/${encodeURIComponent(jobId)}`;
+
+        // Add getJobDetails query parameter if provided
+        if (getJobDetails) {
+            url += `?getJobDetails=${encodeURIComponent(getJobDetails)}`;
+        }
+
         logger("info", `Proxying request to: ${url}`, req.originalUrl, req);
 
         const headers = {

@@ -114,6 +114,11 @@
     align-items: center;
 }
 
+#mapJobSubmitTool .mjs-jobs-header-btns {
+    display: flex;
+    gap: 6px;
+}
+
 #mapJobSubmitTool .mjs-jobs-filter {
     width: 100%;
     box-sizing: border-box;
@@ -125,7 +130,8 @@
     margin: 4px 0 6px 0;
 }
 
-#mapJobSubmitTool .mjs-refresh-btn {
+#mapJobSubmitTool .mjs-refresh-btn,
+#mapJobSubmitTool .mjs-import-btn {
     background: transparent;
     color: #cfcfcf;
     border: 1px solid #444;
@@ -136,11 +142,13 @@
     cursor: pointer;
 }
 
-#mapJobSubmitTool .mjs-refresh-btn:hover:not(:disabled) {
+#mapJobSubmitTool .mjs-refresh-btn:hover:not(:disabled),
+#mapJobSubmitTool .mjs-import-btn:hover:not(:disabled) {
     background: rgba(255, 255, 255, 0.04);
 }
 
-#mapJobSubmitTool .mjs-refresh-btn:disabled {
+#mapJobSubmitTool .mjs-refresh-btn:disabled,
+#mapJobSubmitTool .mjs-import-btn:disabled {
     opacity: 0.6;
     cursor: not-allowed;
 }

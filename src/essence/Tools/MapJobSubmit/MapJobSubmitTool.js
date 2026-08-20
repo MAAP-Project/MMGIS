@@ -1093,14 +1093,35 @@ function addLayerForJob(jobId, job) {
 // ---- HTTP helpers ----
 
 // Poll a specific job's status through the MMGIS proxy
-function pollJob(jobId) {
-    const proxyUrl = `api/mapjobsubmit/jobs/${encodeURIComponent(jobId)}?baseUrl=` + encodeURIComponent(Workflows.baseUrl)
+// getJobDetails: optional boolean to request full job details (for import)
+function pollJob(jobId, getJobDetails) {
+    let proxyUrl = `api/mapjobsubmit/jobs/${encodeURIComponent(jobId)}?baseUrl=` + encodeURIComponent(Workflows.baseUrl)
+
+    // Add getJobDetails parameter if requested
+    if (getJobDetails) {
+        proxyUrl += `&getJobDetails=true`
+    }
+
     return mmgisFetch(proxyUrl)
-        .then((r) => r.json())
-        .then((data) => data || {})
+        .then((r) => {
+            if (!r.ok) {
+                // Return the status so we can handle 404 vs other errors
+                return r.json().catch(() => ({ error: true, status: r.status, statusText: r.statusText }))
+            }
+            return r.json()
+        })
+        .then((data) => {
+            // Check if this is an error response
+            if (data && data.error && data.status) {
+                throw new Error(`HTTP ${data.status}: ${data.statusText || 'Job not found'}`)
+            }
+            return data || {}
+        })
         .catch((err) => {
+            // For normal polling, log and return empty
+            // For import, the caller will handle the error
             console.warn('[MapJobSubmitTool] pollJob failed for', jobId, err)
-            return {}
+            throw err
         })
 }
 
@@ -1698,12 +1719,13 @@ const Workflows = {
                 pollJob(id)
                     .then((body) => mergeJobUpdate(id, body))
                     // One bad job must never sink the whole page's render.
-                    .catch((err) =>
+                    .catch((err) => {
                         console.warn(
                             `[MapJobSubmitTool] detail fetch failed for ${id}`,
                             err
                         )
-                    )
+                        // Don't update the job on error - keep existing state
+                    })
             )
         )
     },
@@ -1730,14 +1752,19 @@ const Workflows = {
             return
         }
         ids.forEach((id) => {
-            pollJob(id).then((body) => {
-                const prev = Workflows.jobs[id]
-                if (!prev) return
-                const prevStatus = prev.status
-                mergeJobUpdate(id, body)
-                if (Workflows.jobs[id].status !== prevStatus)
-                    Workflows.renderJobs()
-            })
+            pollJob(id)
+                .then((body) => {
+                    const prev = Workflows.jobs[id]
+                    if (!prev) return
+                    const prevStatus = prev.status
+                    mergeJobUpdate(id, body)
+                    if (Workflows.jobs[id].status !== prevStatus)
+                        Workflows.renderJobs()
+                })
+                .catch((err) => {
+                    // Silently continue polling other jobs if one fails
+                    console.warn(`[MapJobSubmitTool] pollAll failed for ${id}:`, err)
+                })
         })
     },
 
@@ -2168,7 +2195,7 @@ function interfaceWithMMGIS() {
     $root.append($submit)
 
     $root.append(
-        '<div class="mjs-jobs"><div class="mjs-jobs-header"><div class="mjs-section-label">Jobs</div><button class="mjs-refresh-btn" type="button">Refresh</button></div><input type="text" class="mjs-jobs-filter" placeholder="Filter by name or id…" spellcheck="false" /><div class="mjs-jobs-list"></div><div class="mjs-pagination"></div></div>'
+        '<div class="mjs-jobs"><div class="mjs-jobs-header"><div class="mjs-section-label">Jobs</div><div class="mjs-jobs-header-btns"><button class="mjs-import-btn" type="button">Import Job</button><button class="mjs-refresh-btn" type="button">Refresh</button></div></div><input type="text" class="mjs-jobs-filter" placeholder="Filter by name or id…" spellcheck="false" /><div class="mjs-jobs-list"></div><div class="mjs-pagination"></div></div>'
     )
     Workflows.renderJobs()
 
@@ -2192,6 +2219,112 @@ function interfaceWithMMGIS() {
         Workflows.refreshFromServer().finally(() => {
             $btn.attr('disabled', false).text('Refresh')
         })
+    })
+
+    $root.find('.mjs-import-btn').on('click', function () {
+        const jobId = window.prompt('Enter Job ID to import:')
+        if (!jobId || !jobId.trim()) return
+
+        const trimmedJobId = jobId.trim()
+
+        // Check if job already exists
+        if (Workflows.jobs[trimmedJobId]) {
+            window.alert('Job already present in your jobs list.')
+            return
+        }
+
+        const $btn = $(this)
+        $btn.attr('disabled', true).text('Importing…')
+
+        // Fetch job details from API with getJobDetails=true
+        pollJob(trimmedJobId, true)
+            .then((body) => {
+                if (!body || Object.keys(body).length === 0) {
+                    window.alert('Job not found or returned empty data. Please check the Job ID and try again.')
+                    return
+                }
+
+                // Extract inputs from the API response
+                // The API returns inputs as an array of objects with name, destination, and value
+                let payload = {}
+                console.log('[MapJobSubmitTool] Importing job with body:', body)
+                console.log('[MapJobSubmitTool] Raw inputs from API:', body.inputs)
+
+                if (Array.isArray(body.inputs)) {
+                    // Convert array format to object format for storage
+                    body.inputs.forEach((input) => {
+                        if (input.name && input.value !== undefined && input.value !== null) {
+                            payload[input.name] = input.value
+                        }
+                    })
+                    console.log('[MapJobSubmitTool] Converted inputs array to object:', payload)
+                } else if (body.inputs && typeof body.inputs === 'object') {
+                    // Already in object format
+                    payload = body.inputs
+                }
+
+                console.log('[MapJobSubmitTool] Final payload with', Object.keys(payload).length, 'inputs')
+
+                // Create job entry using processID from body
+                const status = readStatus(body) || 'unknown'
+                // Use process_name as endpoint if available, otherwise use processID
+                const endpoint = body.process_name || (body.processID ? String(body.processID) : readEndpoint(body, null))
+
+                // Use tags[0] as the primary name, fallback to title, then to empty string
+                const jobName = (Array.isArray(body.tags) && body.tags.length > 0)
+                    ? body.tags[0]
+                    : (body.title || '')
+
+                Workflows.jobs[trimmedJobId] = {
+                    endpoint: endpoint,
+                    payload: payload, // Extracted from API response
+                    name: jobName,
+                    status: status,
+                    startedAt: body.created ? new Date(body.created).getTime() : Date.now(),
+                    fromServer: true,
+                    body: body
+                }
+
+                console.log('[MapJobSubmitTool] Created job with name:', jobName, 'and payload:', payload)
+
+                // Add to ordered list at the top
+                const i = Workflows.jobIds.indexOf(trimmedJobId)
+                if (i !== -1) Workflows.jobIds.splice(i, 1)
+                Workflows.jobIds.unshift(trimmedJobId)
+                Workflows.page = 0
+
+                // Save to database
+                return recordSubmittedJob(trimmedJobId, endpoint, payload, jobName)
+                    .then(() => {
+                        window.alert('Job imported successfully!')
+                        Workflows.ensurePolling()
+                        Workflows.renderJobs()
+                    })
+                    .catch((err) => {
+                        console.warn('[MapJobSubmitTool] Failed to save imported job to DB:', err)
+                        // Still show the job even if DB save fails
+                        window.alert('Job imported successfully! (Note: failed to persist to database)')
+                        Workflows.ensurePolling()
+                        Workflows.renderJobs()
+                    })
+            })
+            .catch((err) => {
+                console.error('[MapJobSubmitTool] Failed to import job:', err)
+                // Parse error message to show more specific feedback
+                const errMsg = err.message || String(err)
+                if (errMsg.includes('404')) {
+                    window.alert('Job not found. The Job ID does not exist or you do not have permission to view it.')
+                } else if (errMsg.includes('403')) {
+                    window.alert('Access denied. Please check your authentication token.')
+                } else if (errMsg.includes('401')) {
+                    window.alert('Unauthorized. Please connect with a valid personal access token.')
+                } else {
+                    window.alert(`Failed to import job: ${errMsg}`)
+                }
+            })
+            .finally(() => {
+                $btn.attr('disabled', false).text('Import Job')
+            })
     })
 
     // Click-to-expand on job rows. Delegated so it survives re-renders.
