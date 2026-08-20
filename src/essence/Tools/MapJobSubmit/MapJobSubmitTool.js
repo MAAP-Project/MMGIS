@@ -15,6 +15,9 @@ const SUBMITTED_STORAGE_KEY = 'mmgis.workflows.submitted'
 const SUBMITTED_MAX_ENTRIES = 100
 const PAGE_SIZE = 10
 
+// Terminal/completed job statuses - jobs with these statuses won't be refreshed
+const TERMINAL_STATUSES = ['failed', 'successful', 'dismissed', 'job-failed', 'completed', 'cancelled']
+
 // Input name variations for map-based parameters
 const LAT_VARIATIONS = ['lat', 'latitude']
 const LON_VARIATIONS = ['lon', 'lng', 'longitude']
@@ -214,7 +217,7 @@ function normalizeStatus(s) {
 
 function isTerminal(status) {
     const s = normalizeStatus(status)
-    return s === 'completed' || s === 'failed' || s === 'cancelled'
+    return TERMINAL_STATUSES.includes(s)
 }
 
 // Verify the personal access token by calling the /jobs endpoint.
@@ -1715,8 +1718,15 @@ const Workflows = {
             start + PAGE_SIZE
         )
         return Promise.all(
-            slice.map((id) =>
-                pollJob(id)
+            slice.map((id) => {
+                // Skip polling jobs that are already in a terminal state
+                const job = Workflows.jobs[id]
+                if (job && isTerminal(job.status)) {
+                    console.log(`[MapJobSubmitTool] Skipping refresh for terminal job ${id} (status: ${job.status})`)
+                    return Promise.resolve()
+                }
+
+                return pollJob(id)
                     .then((body) => mergeJobUpdate(id, body))
                     // One bad job must never sink the whole page's render.
                     .catch((err) => {
@@ -1726,7 +1736,7 @@ const Workflows = {
                         )
                         // Don't update the job on error - keep existing state
                     })
-            )
+            })
         )
     },
 
