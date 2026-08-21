@@ -39,6 +39,18 @@
                         "width": 4
                     }
                 ]
+            },
+            {
+                "components": [
+                    {
+                        "field": "variables.accountCreationUrl",
+                        "name": "Account Creation URL",
+                        "description": "Link displayed to unauthenticated users for account creation information.",
+                        "type": "text",
+                        "width": 12,
+                        "placeholder": "https://example.com/create-account"
+                    }
+                ]
             }
         ]
     }

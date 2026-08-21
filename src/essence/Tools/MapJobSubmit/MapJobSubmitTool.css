@@ -603,6 +603,35 @@
     background: #ff8800;
 }
 
+/* Last refreshed timestamp */
+#mapJobSubmitTool .mjs-last-refresh {
+    font-size: 10px;
+    color: #888;
+    margin-left: 8px;
+    white-space: nowrap;
+}
+
+/* Account creation link */
+#mapJobSubmitTool .mjs-account-link {
+    margin-top: 16px;
+    padding: 12px;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid #333;
+    border-radius: 2px;
+    font-size: 11px;
+    color: #cfcfcf;
+    line-height: 1.5;
+}
+
+#mapJobSubmitTool .mjs-account-link a {
+    color: #00A9E0;
+    text-decoration: none;
+}
+
+#mapJobSubmitTool .mjs-account-link a:hover {
+    text-decoration: underline;
+}
+
 /* Visibility control — mirrors the Layers panel's filled checkbox look
    (#layersTool .checkbox/.checkbox.on are panel-scoped, so restated here). */
 #mapJobSubmitTool .mjs-layer-visibility {

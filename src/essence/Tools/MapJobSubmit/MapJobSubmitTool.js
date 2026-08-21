@@ -1802,6 +1802,7 @@ const Workflows = {
     width: 360,
     vars: null,
     baseUrl: '',
+    accountCreationUrl: '',
     selectedProcessID: null,
     selectedAlgorithmId: null,
     selectedVersion: null,
@@ -1819,6 +1820,7 @@ const Workflows = {
     personalAccessToken: null, // Stored in memory only for security
     maapUserId: null, // MAAP user ID from /api/members/self (stored in memory, not token)
     MMGISInterface: null,
+    lastRefreshTime: null, // Track when jobs were last refreshed
 
     make: function () {
         Workflows.vars = L_.getToolVars('mapjobsubmit') || {}
@@ -1829,6 +1831,8 @@ const Workflows = {
         // missions configured before this moved.
         const legacy = (L_.configData && L_.configData.workflows) || {}
         Workflows.baseUrl = Workflows.vars.baseUrl || legacy.baseUrl || ''
+        // accountCreationUrl is optional and configurable in the Configure UI
+        Workflows.accountCreationUrl = Workflows.vars.accountCreationUrl || ''
         if (!Workflows.expandedIds) Workflows.expandedIds = new Set()
         if (!Workflows.paramsExpandedIds)
             Workflows.paramsExpandedIds = new Set()
@@ -1998,6 +2002,10 @@ const Workflows = {
 
     refreshFromServer: function () {
         console.log('[MapJobSubmitTool] refreshFromServer called')
+        // Update the last refresh timestamp
+        Workflows.lastRefreshTime = Date.now()
+        updateLastRefreshDisplay()
+
         // Fetch job history from MMGIS DB (not from MAAP API)
         return fetchSubmittedRegistry()
             .then((reg) => {
@@ -2349,6 +2357,26 @@ function hasMapDisplayableInputs(payload) {
     return Object.keys(inputsToCheck).some(key => shouldShowMapSelect(key))
 }
 
+// Update the "Last refreshed" timestamp display
+function updateLastRefreshDisplay() {
+    const $display = $('#mjs-last-refresh')
+    if (!$display.length) return
+
+    if (!Workflows.lastRefreshTime) {
+        $display.text('')
+        return
+    }
+
+    const date = new Date(Workflows.lastRefreshTime)
+    const timeString = date.toLocaleTimeString(undefined, {
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit'
+    })
+
+    $display.text(`Last refreshed: ${timeString}`)
+}
+
 function buildExpandedSection(job, jobId) {
     const $exp = $('<div class="mjs-job-expanded"></div>')
 
@@ -2554,41 +2582,46 @@ function interfaceWithMMGIS() {
     const $authBanner = $('<div id="mjs-auth-banner"></div>')
     $root.append($authBanner)
 
+    // Form content wrapper - will be hidden until authenticated
+    const $formContent = $('<div id="mjs-form-content" style="display: none;"></div>')
+
     // Algorithm selection dropdowns (3-step: id → version → deployer)
-    $root.append('<div class="mjs-section-label">Algorithm</div>')
+    $formContent.append('<div class="mjs-section-label">Algorithm</div>')
     const $algorithmSelect = $('<select id="mjs-algorithm-select"><option value="">Select algorithm...</option></select>')
-    $root.append($algorithmSelect)
+    $formContent.append($algorithmSelect)
 
-    $root.append('<div class="mjs-section-label">Version</div>')
+    $formContent.append('<div class="mjs-section-label">Version</div>')
     const $versionSelect = $('<select id="mjs-version-select" disabled><option value="">Select version...</option></select>')
-    $root.append($versionSelect)
+    $formContent.append($versionSelect)
 
-    $root.append('<div class="mjs-section-label">Deployer</div>')
+    $formContent.append('<div class="mjs-section-label">Deployer</div>')
     const $deployerSelect = $('<select id="mjs-deployer-select" disabled><option value="">Select deployer...</option></select>')
-    $root.append($deployerSelect)
+    $formContent.append($deployerSelect)
 
-    $root.append('<div class="mjs-endpoint-desc" id="mjs-endpoint-desc"></div>')
+    $formContent.append('<div class="mjs-endpoint-desc" id="mjs-endpoint-desc"></div>')
 
-    $root.append('<div class="mjs-section-label">Queue (required)</div>')
+    $formContent.append('<div class="mjs-section-label">Queue (required)</div>')
     const $queueSelect = $('<select id="mjs-queue-select" disabled></select>')
     $queueSelect.append('<option value="">Enter token to see queues</option>')
-    $root.append($queueSelect)
+    $formContent.append($queueSelect)
 
-    $root.append('<div class="mjs-section-label">Tag</div>')
+    $formContent.append('<div class="mjs-section-label">Tag</div>')
     const $tagInput = $(
         '<input type="text" id="mjs-submit-name" class="mjs-name-input" placeholder="e.g. test_default_inputs" />'
     )
-    $root.append($tagInput)
+    $formContent.append($tagInput)
 
-    $root.append('<div class="mjs-section-label">Parameters</div>')
+    $formContent.append('<div class="mjs-section-label">Parameters</div>')
     const $form = $('<div id="mjs-form"></div>')
-    $root.append($form)
+    $formContent.append($form)
 
     const $submit = $('<button class="mjs-submit" disabled>Loading…</button>')
-    $root.append($submit)
+    $formContent.append($submit)
+
+    $root.append($formContent)
 
     $root.append(
-        '<div class="mjs-jobs"><div class="mjs-jobs-header"><div class="mjs-section-label">Jobs</div><div class="mjs-jobs-header-btns"><button class="mjs-import-btn" type="button">Import Job</button><button class="mjs-refresh-btn" type="button">Refresh</button></div></div><input type="text" class="mjs-jobs-filter" placeholder="Filter by name or id…" spellcheck="false" /><div class="mjs-jobs-list"></div><div class="mjs-pagination"></div></div>'
+        '<div class="mjs-jobs"><div class="mjs-jobs-header"><div class="mjs-section-label">Jobs</div><div class="mjs-jobs-header-btns"><button class="mjs-import-btn" type="button">Import Job</button><button class="mjs-refresh-btn" type="button">Refresh</button><span class="mjs-last-refresh" id="mjs-last-refresh"></span></div></div><input type="text" class="mjs-jobs-filter" placeholder="Filter by name or id…" spellcheck="false" /><div class="mjs-jobs-list"></div><div class="mjs-pagination"></div></div>'
     )
     Workflows.renderJobs()
 
@@ -3108,16 +3141,23 @@ function interfaceWithMMGIS() {
         $section.append($tokenInput).append($connectBtn)
         $authBanner.append($section)
 
-        // Reset queue dropdown to show PAT prompt
-        $queueSelect.empty().append('<option value="">Enter PAT to see Queues</option>')
-        $queueSelect.attr('disabled', true)
+        // Add account creation link if configured
+        if (Workflows.accountCreationUrl) {
+            const $linkSection = $(
+                `<div class="mjs-account-link">Link for information to create an account: <a href="${escapeHTML(
+                    Workflows.accountCreationUrl
+                )}" target="_blank" rel="noopener noreferrer">${escapeHTML(
+                    Workflows.accountCreationUrl
+                )}</a></div>`
+            )
+            $authBanner.append($linkSection)
+        }
+
+        // Hide form content (algorithms, parameters, submit button) until authenticated
+        $('#mjs-form-content').hide()
 
         // Hide jobs section until authenticated
         $('.mjs-jobs').hide()
-
-        // Enable submit button even without auth - user can still select algorithms
-        // and will get an error on submit if auth is required
-        $submit.text('Submit').attr('disabled', false)
     }
 
     // Store render functions on Workflows object so connect() can call them
@@ -3145,6 +3185,9 @@ function interfaceWithMMGIS() {
         })
 
         $authBanner.append($row)
+
+        // Show form content (algorithms, parameters, submit button) now that user is authenticated
+        $('#mjs-form-content').show()
 
         // Populate algorithm dropdown (already fetched in make())
         populateAlgorithmDropdown()
