@@ -1,6 +1,24 @@
 const express = require("express");
 const router = express.Router();
 
+/**
+ * Sanitizes user input to prevent XSS attacks.
+ * Based on the pattern used in API/Backend/Config/routes/configs.js
+ */
+function sanitizeInput(input) {
+    if (typeof input !== "string") return String(input);
+    return input.replace(/[<>'"&]/g, function (match) {
+        switch (match) {
+            case "<": return "&lt;";
+            case ">": return "&gt;";
+            case '"': return "&quot;";
+            case "'": return "&#x27;";
+            case "&": return "&amp;";
+            default: return match;
+        }
+    });
+}
+
 // GET /api/mapjobsubmit-history
 // Returns all job submissions for the authenticated user, ordered newest first.
 // MMGIS uses the username string directly as the identity field; no FK.
@@ -59,6 +77,12 @@ router.post("/", async (req, res) => {
             .status(400)
             .send({ status: "failure", message: "workflow_id is required" });
     }
+
+    // Sanitize string inputs to prevent XSS
+    const sanitizedName = name ? sanitizeInput(name) : null;
+    const sanitizedEndpoint = endpoint ? sanitizeInput(endpoint) : null;
+    const sanitizedMaapUserId = maap_user_id ? sanitizeInput(maap_user_id) : null;
+
     try {
         // Lazy load model to avoid initialization order issues
         const { JobSubmissions } = require("../models/jobSubmissions");
@@ -72,19 +96,19 @@ router.post("/", async (req, res) => {
         const [row, created] = await JobSubmissions.findOrCreate({
             where: { username: req.user, workflow_id },
             defaults: {
-                maap_user_id: maap_user_id || null,
-                endpoint: endpoint || null,
+                maap_user_id: sanitizedMaapUserId,
+                endpoint: sanitizedEndpoint,
                 payload: payload || null,
-                name: name || null,
+                name: sanitizedName,
             },
         });
         if (!created) {
             // Preserve existing endpoint/payload if we already have them;
             // only fill blanks or update the name/maap_user_id.
             const updates = {};
-            if (name !== undefined) updates.name = name || null;
-            if (maap_user_id !== undefined) updates.maap_user_id = maap_user_id || null;
-            if (endpoint && !row.endpoint) updates.endpoint = endpoint;
+            if (name !== undefined) updates.name = sanitizedName;
+            if (maap_user_id !== undefined) updates.maap_user_id = sanitizedMaapUserId;
+            if (endpoint && !row.endpoint) updates.endpoint = sanitizedEndpoint;
             if (payload && !row.payload) updates.payload = payload;
             if (Object.keys(updates).length > 0) await row.update(updates);
         }

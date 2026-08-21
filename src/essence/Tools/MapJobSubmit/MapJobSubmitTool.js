@@ -219,6 +219,10 @@ function migrateLegacyLocalStorageRegistry() {
 // This global gets populated asynchronously via fetchProcesses() when the tool opens.
 let PROCESSES = []
 
+/**
+ * Escapes HTML special characters to prevent XSS attacks.
+ * Standard pattern used across MMGIS (WorkflowsTool, Config routes, etc.)
+ */
 function escapeHTML(s) {
     return String(s == null ? '' : s)
         .replace(/&/g, '&amp;')
@@ -226,6 +230,43 @@ function escapeHTML(s) {
         .replace(/>/g, '&gt;')
         .replace(/"/g, '&quot;')
         .replace(/'/g, '&#39;')
+}
+
+/**
+ * Sanitizes user input by removing dangerous characters.
+ * Based on F_.sanitize() and backend sanitizeInput() patterns.
+ */
+function sanitizeInput(str) {
+    if (str == null) return ''
+    // Remove potentially dangerous characters: < > ; { }
+    // These could be used for XSS/injection attacks
+    return String(str).replace(/[<>;{}]/g, '')
+}
+
+/**
+ * Validates and sanitizes a personal access token.
+ * Ensures tokens don't contain XSS/injection characters.
+ */
+function sanitizeToken(token) {
+    if (!token || typeof token !== 'string') return null
+
+    const trimmed = token.trim()
+    if (trimmed.length === 0) return null
+
+    // Check for dangerous characters that could indicate XSS attempt
+    const dangerousChars = /[<>'"`;(){}[\]\\]/
+    if (dangerousChars.test(trimmed)) {
+        console.warn('[MapJobSubmitTool] Token contains potentially dangerous characters')
+        return null
+    }
+
+    // Reasonable length limit (most tokens are 20-200 chars, allow up to 500)
+    if (trimmed.length > 500) {
+        console.warn('[MapJobSubmitTool] Token exceeds maximum length')
+        return null
+    }
+
+    return trimmed
 }
 
 function normalizeStatus(s) {
@@ -984,7 +1025,9 @@ function buildForm($parent, fields) {
                 const raw = $input.val()
                 if (raw !== '') v = Number(raw)
             } else {
-                v = $input.val()
+                // Sanitize text inputs to prevent XSS
+                const raw = $input.val()
+                v = sanitizeInput(raw)
             }
             if (v !== undefined && v !== '') out[f.name] = v
         })
@@ -1878,11 +1921,13 @@ const Workflows = {
 
     // Authenticates using a personal access token by verifying it with the /jobs endpoint
     connect: function (token) {
-        if (!token || token.trim().length === 0) {
-            window.alert('Please enter a valid personal access token.')
+        // Sanitize and validate token
+        const sanitized = sanitizeToken(token)
+        if (!sanitized) {
+            window.alert('Invalid token format. Please enter a valid personal access token.')
             return
         }
-        Workflows.personalAccessToken = token.trim()
+        Workflows.personalAccessToken = sanitized
 
         // Verify the token by calling /jobs endpoint (returns 403 if invalid)
         verifyToken().then((isValid) => {
@@ -3269,7 +3314,8 @@ function interfaceWithMMGIS() {
             $queueSelect.trigger('focus')
             return
         }
-        const tag = $tagInput.val().trim()
+        // Sanitize tag/name input to prevent XSS
+        const tag = sanitizeInput($tagInput.val().trim())
         const payload = collectPayload()
         $submit.attr('disabled', true).text('Submitting…')
         Workflows.submit(Workflows.selectedProcessID, payload, tag)
