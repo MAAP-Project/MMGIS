@@ -1480,6 +1480,7 @@ const MapSelection = {
     $lonInput: null, // For lat/lon pair
     drawing: null,
     clickHandler: null,
+    persistentLayers: {}, // Map of inputKey -> layer, so each button has only one feature
 
     startPoint: function(latKey, lonKey, $latInput, $lonInput) {
         this.cancel() // Cancel any existing selection
@@ -1505,6 +1506,16 @@ const MapSelection = {
             return
         }
 
+        // Clear any existing layer for this button
+        if (this.persistentLayers[this.inputKey]) {
+            try {
+                map.removeLayer(this.persistentLayers[this.inputKey])
+            } catch (err) {
+                console.warn('[MapJobSubmitTool] Failed to remove previous layer:', err)
+            }
+            delete this.persistentLayers[this.inputKey]
+        }
+
         // Listen for a single click on the map
         this.clickHandler = (e) => {
             const lat = e.latlng.lat
@@ -1513,6 +1524,19 @@ const MapSelection = {
             // Fill both lat and lon fields
             this.$latInput.val(lat.toFixed(6))
             this.$lonInput.val(lon.toFixed(6))
+
+            // Add a persistent marker at the selected location
+            const marker = L.circleMarker([lat, lon], {
+                radius: 8,
+                color: '#00A9E0',
+                fillColor: '#00A9E0',
+                fillOpacity: 0.6,
+                weight: 2
+            }).addTo(map)
+            marker.bindPopup(`Selected Point<br>Lat: ${lat.toFixed(6)}<br>Lon: ${lon.toFixed(6)}`)
+
+            // Store the marker so it persists until job submission (one per button)
+            this.persistentLayers[this.inputKey] = marker
 
             this.cancel()
         }
@@ -1546,6 +1570,16 @@ const MapSelection = {
             return
         }
 
+        // Clear any existing layer for this button
+        if (this.persistentLayers[this.inputKey]) {
+            try {
+                map.removeLayer(this.persistentLayers[this.inputKey])
+            } catch (err) {
+                console.warn('[MapJobSubmitTool] Failed to remove previous layer:', err)
+            }
+            delete this.persistentLayers[this.inputKey]
+        }
+
         if (type === 'bbox') {
             // Use Leaflet Draw to draw a rectangle
             this.drawing = new L.Draw.Rectangle(map, {
@@ -1559,11 +1593,19 @@ const MapSelection = {
 
             // Listen for the draw:created event
             const handler = (e) => {
-                const bounds = e.layer.getBounds()
+                const layer = e.layer
+                const bounds = layer.getBounds()
                 const west = bounds.getWest()
                 const south = bounds.getSouth()
                 const east = bounds.getEast()
                 const north = bounds.getNorth()
+
+                // Add the rectangle to the map so it persists
+                layer.addTo(map)
+                layer.bindPopup(`Selected Bbox<br>W: ${west.toFixed(6)}<br>S: ${south.toFixed(6)}<br>E: ${east.toFixed(6)}<br>N: ${north.toFixed(6)}`)
+
+                // Store the layer so it persists until job submission (one per button)
+                this.persistentLayers[this.inputKey] = layer
 
                 // If we have bbox inputs object, populate the 4 fields
                 if (this.$bboxInputs) {
@@ -1587,6 +1629,19 @@ const MapSelection = {
             this.clickHandler = (e) => {
                 const lat = e.latlng.lat
                 const lon = e.latlng.lng
+
+                // Add a persistent marker at the selected location
+                const marker = L.circleMarker([lat, lon], {
+                    radius: 8,
+                    color: '#00A9E0',
+                    fillColor: '#00A9E0',
+                    fillOpacity: 0.6,
+                    weight: 2
+                }).addTo(map)
+                marker.bindPopup(`Selected Point<br>Lat: ${lat.toFixed(6)}<br>Lon: ${lon.toFixed(6)}`)
+
+                // Store the marker so it persists until job submission (one per button)
+                this.persistentLayers[this.inputKey] = marker
 
                 // Check if this is for lat or lon specifically
                 const keyLower = inputKey.toLowerCase().replace(/[-_\s]/g, '')
@@ -1632,6 +1687,20 @@ const MapSelection = {
         this.type = null
         this.inputKey = null
         this.$targetInput = null
+    },
+
+    clearPersistentLayers: function() {
+        if (Map_ && Map_.map) {
+            const map = Map_.map
+            Object.keys(this.persistentLayers).forEach(key => {
+                try {
+                    map.removeLayer(this.persistentLayers[key])
+                } catch (err) {
+                    console.warn('[MapJobSubmitTool] Failed to remove layer:', err)
+                }
+            })
+        }
+        this.persistentLayers = {}
     }
 }
 
@@ -2409,24 +2478,16 @@ function interfaceWithMMGIS() {
 
     $root.append('<div class="mjs-endpoint-desc" id="mjs-endpoint-desc"></div>')
 
-    $root.append('<div class="mjs-section-label">Queue *</div>')
+    $root.append('<div class="mjs-section-label">Queue (required)</div>')
     const $queueSelect = $('<select id="mjs-queue-select" disabled></select>')
     $queueSelect.append('<option value="">Enter token to see queues</option>')
     $root.append($queueSelect)
 
-    $root.append('<div class="mjs-section-label">Tag *</div>')
+    $root.append('<div class="mjs-section-label">Tag</div>')
     const $tagInput = $(
-        '<input type="text" id="mjs-submit-name" class="mjs-name-input" placeholder="e.g. test_default_inputs (required)" />'
+        '<input type="text" id="mjs-submit-name" class="mjs-name-input" placeholder="e.g. test_default_inputs" />'
     )
     $root.append($tagInput)
-    const $tagWarning = $(
-        '<div class="mjs-name-warning">Please provide a tag before submitting.</div>'
-    )
-    $root.append($tagWarning)
-    $tagInput.on('input', function () {
-        $tagInput.removeClass('mjs-input-error')
-        $tagWarning.removeClass('visible')
-    })
 
     $root.append('<div class="mjs-section-label">Parameters</div>')
     const $form = $('<div id="mjs-form"></div>')
@@ -3022,6 +3083,8 @@ function interfaceWithMMGIS() {
         if (Workflows.selectedAlgorithmId) {
             populateVersionDropdown(Workflows.selectedAlgorithmId)
         }
+        // Clear map selections when algorithm changes
+        MapSelection.clearPersistentLayers()
         renderSelectedProcess()
     })
 
@@ -3033,6 +3096,8 @@ function interfaceWithMMGIS() {
         if (Workflows.selectedAlgorithmId && Workflows.selectedVersion) {
             populateDeployerDropdown(Workflows.selectedAlgorithmId, Workflows.selectedVersion)
         }
+        // Clear map selections when version changes
+        MapSelection.clearPersistentLayers()
         renderSelectedProcess()
     })
 
@@ -3046,6 +3111,8 @@ function interfaceWithMMGIS() {
             const proc = PROCESSES.find((p) => p.processID === processID)
             Workflows.selectedDeployer = proc ? proc.deployedBy : null
         }
+        // Clear map selections when deployer changes
+        MapSelection.clearPersistentLayers()
         renderSelectedProcess()
     })
 
@@ -3069,17 +3136,14 @@ function interfaceWithMMGIS() {
             return
         }
         const tag = $tagInput.val().trim()
-        if (!tag) {
-            $tagInput.addClass('mjs-input-error').trigger('focus')
-            $tagWarning.addClass('visible')
-            return
-        }
         const payload = collectPayload()
         $submit.attr('disabled', true).text('Submitting…')
         Workflows.submit(Workflows.selectedProcessID, payload, tag)
             .then(() => {
                 $submit.attr('disabled', false).text('Submit')
                 $tagInput.val('')
+                // Clear any persistent map selections (bbox rectangles, point markers)
+                MapSelection.clearPersistentLayers()
             })
             .catch((err) => {
                 $submit.attr('disabled', false).text('Submit')
