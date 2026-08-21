@@ -671,11 +671,58 @@ function buildFormFromInputs($parent, inputs, $queueSelect, $tagInput) {
                 }
             }
 
-            // Update the format display whenever any bbox field changes
-            $minLon.on('input', updateFormatDisplay)
-            $minLat.on('input', updateFormatDisplay)
-            $maxLon.on('input', updateFormatDisplay)
-            $maxLat.on('input', updateFormatDisplay)
+            // Function to update the bbox rectangle on the map
+            const updateBboxOnMap = () => {
+                const minLon = parseFloat($minLon.val())
+                const minLat = parseFloat($minLat.val())
+                const maxLon = parseFloat($maxLon.val())
+                const maxLat = parseFloat($maxLat.val())
+
+                if (!isNaN(minLon) && !isNaN(minLat) && !isNaN(maxLon) && !isNaN(maxLat)) {
+                    if (Map_ && Map_.map) {
+                        const map = Map_.map
+                        const L = window.L
+
+                        // Remove existing rectangle if present
+                        if (MapSelection.persistentLayers[key]) {
+                            try {
+                                map.removeLayer(MapSelection.persistentLayers[key])
+                            } catch (err) {
+                                console.warn('[MapJobSubmitTool] Failed to remove bbox layer:', err)
+                            }
+                        }
+
+                        // Create new rectangle
+                        const rect = L.rectangle([[minLat, minLon], [maxLat, maxLon]], {
+                            color: '#ff8800',
+                            weight: 2,
+                            fillOpacity: 0.2
+                        }).addTo(map)
+                        rect.bindPopup(`Selected Bbox<br>W: ${minLon.toFixed(6)}<br>S: ${minLat.toFixed(6)}<br>E: ${maxLon.toFixed(6)}<br>N: ${maxLat.toFixed(6)}`)
+
+                        // Store the new rectangle
+                        MapSelection.persistentLayers[key] = rect
+                    }
+                }
+            }
+
+            // Update the format display and map whenever any bbox field changes
+            $minLon.on('input', () => {
+                updateFormatDisplay()
+                updateBboxOnMap()
+            })
+            $minLat.on('input', () => {
+                updateFormatDisplay()
+                updateBboxOnMap()
+            })
+            $maxLon.on('input', () => {
+                updateFormatDisplay()
+                updateBboxOnMap()
+            })
+            $maxLat.on('input', () => {
+                updateFormatDisplay()
+                updateBboxOnMap()
+            })
 
             $field.append($formatLabel)
             $field.append($formatInput)
@@ -758,6 +805,50 @@ function buildFormFromInputs($parent, inputs, $queueSelect, $tagInput) {
     if (hasLatLonPair && lastLatLonField) {
         const $pointBtn = $('<button type="button" class="mjs-select-point-btn" data-lat-key="' + escapeHTML(latKey) + '" data-lon-key="' + escapeHTML(lonKey) + '">Select Point on Map</button>')
         lastLatLonField.after($pointBtn)
+
+        // Add listeners to update the point marker when lat/lon fields change
+        const $latInput = $(`#mjs-input-${latKey.replace(/[^A-Za-z0-9_-]/g, '_')}`)
+        const $lonInput = $(`#mjs-input-${lonKey.replace(/[^A-Za-z0-9_-]/g, '_')}`)
+
+        const updatePointOnMap = () => {
+            const lat = parseFloat($latInput.val())
+            const lon = parseFloat($lonInput.val())
+
+            if (!isNaN(lat) && !isNaN(lon)) {
+                if (Map_ && Map_.map) {
+                    const map = Map_.map
+                    const L = window.L
+
+                    // Remove existing marker if present
+                    const markerKey = 'latlon-pair'
+                    if (MapSelection.persistentLayers[markerKey]) {
+                        try {
+                            map.removeLayer(MapSelection.persistentLayers[markerKey])
+                        } catch (err) {
+                            console.warn('[MapJobSubmitTool] Failed to remove point marker:', err)
+                        }
+                    }
+
+                    // Create new marker
+                    const marker = L.circleMarker([lat, lon], {
+                        radius: 8,
+                        color: '#00A9E0',
+                        fillColor: '#00A9E0',
+                        fillOpacity: 0.6,
+                        weight: 2
+                    }).addTo(map)
+                    marker.bindPopup(`Selected Point<br>Lat: ${lat.toFixed(6)}<br>Lon: ${lon.toFixed(6)}`)
+
+                    // Store the new marker
+                    MapSelection.persistentLayers[markerKey] = marker
+                }
+            }
+        }
+
+        if ($latInput.length && $lonInput.length) {
+            $latInput.on('input', updatePointOnMap)
+            $lonInput.on('input', updatePointOnMap)
+        }
     }
 
     return function collectPayload() {
