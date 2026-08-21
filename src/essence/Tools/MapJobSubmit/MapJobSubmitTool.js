@@ -568,6 +568,22 @@ function buildFormFromInputs($parent, inputs, $queueSelect, $tagInput) {
     }
 
     const inputRefs = []
+
+    // First pass: detect if we have both lat and lon fields
+    let latKey = null
+    let lonKey = null
+    Object.keys(inputs).forEach((key) => {
+        const normalized = normalizeInputKey(key)
+        if (LAT_VARIATIONS.includes(normalized)) {
+            latKey = key
+        } else if (LON_VARIATIONS.includes(normalized)) {
+            lonKey = key
+        }
+    })
+
+    const hasLatLonPair = latKey && lonKey
+    let lastLatLonField = null // Track the last lat or lon field to insert button after
+
     Object.entries(inputs).forEach(([key, input]) => {
         const id = `mjs-input-${key.replace(/[^A-Za-z0-9_-]/g, '_')}`
         const $field = $('<div class="mjs-field"></div>')
@@ -706,8 +722,12 @@ function buildFormFromInputs($parent, inputs, $queueSelect, $tagInput) {
                 .attr('placeholder', input.placeholder || '')
                 .val(defaultValue)
 
-            // Add map select button if applicable
-            if (shouldShowMapSelect(key)) {
+            // Check if this is a lat or lon field and we have a pair
+            const isLatOrLon = LAT_VARIATIONS.includes(normalizeInputKey(key)) ||
+                               LON_VARIATIONS.includes(normalizeInputKey(key))
+
+            // Add map select button if applicable, but skip individual buttons for lat/lon if we have a pair
+            if (shouldShowMapSelect(key) && !(hasLatLonPair && isLatOrLon)) {
                 const $inputWrapper = $('<div class="mjs-input-with-btn"></div>')
                 $inputWrapper.append($input)
                 const $mapBtn = $('<button type="button" class="mjs-map-select-btn" data-input-key="' + escapeHTML(key) + '">Select on Map</button>')
@@ -727,7 +747,18 @@ function buildFormFromInputs($parent, inputs, $queueSelect, $tagInput) {
         }
 
         $parent.append($field)
+
+        // Track if this is a lat or lon field for button placement
+        if (hasLatLonPair && (key === latKey || key === lonKey)) {
+            lastLatLonField = $field
+        }
     })
+
+    // Add a single "Select Point on Map" button after the last lat/lon field
+    if (hasLatLonPair && lastLatLonField) {
+        const $pointBtn = $('<button type="button" class="mjs-select-point-btn" data-lat-key="' + escapeHTML(latKey) + '" data-lon-key="' + escapeHTML(lonKey) + '">Select Point on Map</button>')
+        lastLatLonField.after($pointBtn)
+    }
 
     return function collectPayload() {
         const inputs = {}
@@ -1445,8 +1476,51 @@ const MapSelection = {
     inputKey: null,
     $targetInput: null, // For single input (point)
     $bboxInputs: null, // For bbox: {$minLon, $minLat, $maxLon, $maxLat}
+    $latInput: null, // For lat/lon pair
+    $lonInput: null, // For lat/lon pair
     drawing: null,
     clickHandler: null,
+
+    startPoint: function(latKey, lonKey, $latInput, $lonInput) {
+        this.cancel() // Cancel any existing selection
+        this.active = true
+        this.type = 'point'
+        this.inputKey = 'latlon-pair'
+        this.$latInput = $latInput
+        this.$lonInput = $lonInput
+
+        if (!Map_ || !Map_.map) {
+            console.warn('[MapJobSubmitTool] Map not available for selection')
+            window.alert('Map is not available for selection')
+            this.cancel()
+            return
+        }
+
+        const map = Map_.map
+        const L = window.L
+        if (!L) {
+            console.warn('[MapJobSubmitTool] Leaflet not available')
+            window.alert('Leaflet library is not available')
+            this.cancel()
+            return
+        }
+
+        // Listen for a single click on the map
+        this.clickHandler = (e) => {
+            const lat = e.latlng.lat
+            const lon = e.latlng.lng
+
+            // Fill both lat and lon fields
+            this.$latInput.val(lat.toFixed(6))
+            this.$lonInput.val(lon.toFixed(6))
+
+            this.cancel()
+        }
+        map.on('click', this.clickHandler)
+
+        // Change cursor to crosshair
+        map.getContainer().style.cursor = 'crosshair'
+    },
 
     start: function(type, inputKey, $input, $bboxInputs) {
         this.cancel() // Cancel any existing selection
@@ -2614,6 +2688,48 @@ function interfaceWithMMGIS() {
                 window.alert(`Failed to remove job: ${err.message}`)
                 $btn.attr('disabled', false).text('Remove Job')
             })
+    })
+
+    // Handle "Select Point on Map" button for lat/lon pairs. Delegated.
+    $root.on('click', '.mjs-select-point-btn', function(e) {
+        e.preventDefault()
+        e.stopPropagation()
+
+        // If already active, cancel the selection
+        if ($(this).hasClass('mjs-map-select-active')) {
+            MapSelection.cancel()
+            return
+        }
+
+        const latKey = $(this).attr('data-lat-key')
+        const lonKey = $(this).attr('data-lon-key')
+        if (!latKey || !lonKey) return
+
+        // Find the input fields for lat and lon
+        const $latInput = $(`#mjs-input-${latKey.replace(/[^A-Za-z0-9_-]/g, '_')}`)
+        const $lonInput = $(`#mjs-input-${lonKey.replace(/[^A-Za-z0-9_-]/g, '_')}`)
+
+        if (!$latInput.length || !$lonInput.length) return
+
+        // Start point selection with both inputs
+        MapSelection.startPoint(latKey, lonKey, $latInput, $lonInput)
+
+        // Update button text to indicate active selection
+        $(this).text('Click map to select point').addClass('mjs-map-select-active')
+
+        // Restore button text when selection is cancelled/completed
+        const originalBtn = $(this)
+        const restoreBtn = () => {
+            originalBtn.text('Select Point on Map').removeClass('mjs-map-select-active')
+        }
+
+        // Poll to detect when selection is cancelled
+        const checkInterval = setInterval(() => {
+            if (!MapSelection.active) {
+                restoreBtn()
+                clearInterval(checkInterval)
+            }
+        }, 100)
     })
 
     // Handle "Select on Map" button clicks for bbox/lat/lon inputs. Delegated.
