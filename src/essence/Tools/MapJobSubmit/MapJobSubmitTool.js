@@ -575,6 +575,9 @@ function buildFormFromInputs($parent, inputs, $queueSelect, $tagInput) {
         // Determine input type
         const inputType = (input.type || '').toLowerCase()
 
+        // Check if this is a bbox field
+        const isBbox = BBOX_VARIATIONS.includes(normalizeInputKey(key))
+
         // Label using the input name/key
         const typeLabel = inputType ? ` <span class="mjs-field-type">${escapeHTML(inputType)}</span>` : ''
         $field.append(
@@ -582,7 +585,101 @@ function buildFormFromInputs($parent, inputs, $queueSelect, $tagInput) {
         )
 
         let $input
-        if (inputType === 'boolean') {
+        if (isBbox) {
+            // Special handling for bbox: 4 coordinate fields + format selector
+            // Validate that type is string, array, or text
+            if (inputType !== 'string' && inputType !== 'array' && inputType !== 'text') {
+                $field.append(
+                    '<div class="mjs-bbox-error">⚠ bbox must be string, array, or text type</div>'
+                )
+                $parent.append($field)
+                return
+            }
+
+            // Create 4 input fields for bbox coordinates
+            const $bboxGrid = $('<div class="mjs-bbox-grid"></div>')
+
+            const $minLon = $('<input type="number" step="any" placeholder="Min Lon" class="mjs-bbox-input" data-bbox-field="min_lon" />')
+            const $minLat = $('<input type="number" step="any" placeholder="Min Lat" class="mjs-bbox-input" data-bbox-field="min_lat" />')
+            const $maxLon = $('<input type="number" step="any" placeholder="Max Lon" class="mjs-bbox-input" data-bbox-field="max_lon" />')
+            const $maxLat = $('<input type="number" step="any" placeholder="Max Lat" class="mjs-bbox-input" data-bbox-field="max_lat" />')
+
+            $bboxGrid.append(
+                $('<div class="mjs-bbox-field"><label>Min Lon</label></div>').append($minLon)
+            )
+            $bboxGrid.append(
+                $('<div class="mjs-bbox-field"><label>Min Lat</label></div>').append($minLat)
+            )
+            $bboxGrid.append(
+                $('<div class="mjs-bbox-field"><label>Max Lon</label></div>').append($maxLon)
+            )
+            $bboxGrid.append(
+                $('<div class="mjs-bbox-field"><label>Max Lat</label></div>').append($maxLat)
+            )
+
+            $field.append($bboxGrid)
+
+            // Add "Submit as" text input showing the actual formatted values
+            const $formatLabel = $('<div class="mjs-bbox-format-label">Submit as</div>')
+            const $formatInput = $('<input type="text" class="mjs-bbox-format-input" />')
+
+            // Set initial placeholder text
+            let placeholderText = ''
+            if (inputType === 'array') {
+                placeholderText = '[min_longitude, min_latitude, max_longitude, max_latitude]'
+            } else {
+                // string or text type
+                placeholderText = 'min_longitude,min_latitude,max_longitude,max_latitude'
+            }
+            $formatInput.val(placeholderText)
+
+            // Function to update the "Submit as" field based on current values
+            const updateFormatDisplay = () => {
+                const minLon = $minLon.val()
+                const minLat = $minLat.val()
+                const maxLon = $maxLon.val()
+                const maxLat = $maxLat.val()
+
+                if (minLon && minLat && maxLon && maxLat) {
+                    let formatted = ''
+                    if (inputType === 'array') {
+                        formatted = `[${minLon}, ${minLat}, ${maxLon}, ${maxLat}]`
+                    } else {
+                        // string or text type
+                        formatted = `${minLon},${minLat},${maxLon},${maxLat}`
+                    }
+                    $formatInput.val(formatted)
+                } else {
+                    // Show placeholder text when fields are empty
+                    $formatInput.val(placeholderText)
+                }
+            }
+
+            // Update the format display whenever any bbox field changes
+            $minLon.on('input', updateFormatDisplay)
+            $minLat.on('input', updateFormatDisplay)
+            $maxLon.on('input', updateFormatDisplay)
+            $maxLat.on('input', updateFormatDisplay)
+
+            $field.append($formatLabel)
+            $field.append($formatInput)
+
+            // Add "Select on Map" button
+            const $mapBtn = $('<button type="button" class="mjs-map-select-btn mjs-bbox-map-btn" data-input-key="' + escapeHTML(key) + '">Select on Map</button>')
+            $field.append($mapBtn)
+
+            // Store reference to all bbox components
+            inputRefs.push({
+                key,
+                type: inputType,
+                isBbox: true,
+                $minLon,
+                $minLat,
+                $maxLon,
+                $maxLat,
+                $formatInput
+            })
+        } else if (inputType === 'boolean') {
             // Boolean toggle switch
             const defaultValue = input.default != null ? input.default : false
             const checked = defaultValue === true || defaultValue === 'true'
@@ -600,6 +697,7 @@ function buildFormFromInputs($parent, inputs, $queueSelect, $tagInput) {
 
             $toggleWrapper.append($input).append($slider)
             $field.append($toggleWrapper)
+            inputRefs.push({ key, $input, type: inputType })
         } else {
             // Text input for all other types
             const defaultValue = input.default != null ? String(input.default) : ''
@@ -618,6 +716,7 @@ function buildFormFromInputs($parent, inputs, $queueSelect, $tagInput) {
             } else {
                 $field.append($input)
             }
+            inputRefs.push({ key, $input, type: inputType })
         }
 
         // Description if provided
@@ -628,13 +727,32 @@ function buildFormFromInputs($parent, inputs, $queueSelect, $tagInput) {
         }
 
         $parent.append($field)
-        inputRefs.push({ key, $input, type: inputType })
     })
 
     return function collectPayload() {
         const inputs = {}
-        inputRefs.forEach(({ key, $input, type }) => {
-            if (type === 'boolean') {
+        inputRefs.forEach((ref) => {
+            const { key, $input, type, isBbox } = ref
+
+            if (isBbox) {
+                // Collect bbox coordinates
+                const minLon = parseFloat(ref.$minLon.val())
+                const minLat = parseFloat(ref.$minLat.val())
+                const maxLon = parseFloat(ref.$maxLon.val())
+                const maxLat = parseFloat(ref.$maxLat.val())
+
+                // Only add if all values are present
+                if (!isNaN(minLon) && !isNaN(minLat) && !isNaN(maxLon) && !isNaN(maxLat)) {
+                    // Order: [min_longitude, min_latitude, max_longitude, max_latitude]
+                    // Format based on the input type from the algorithm
+                    if (type === 'array') {
+                        inputs[key] = [minLon, minLat, maxLon, maxLat]
+                    } else {
+                        // String or text format: "min_lon,min_lat,max_lon,max_lat"
+                        inputs[key] = `${minLon},${minLat},${maxLon},${maxLat}`
+                    }
+                }
+            } else if (type === 'boolean') {
                 inputs[key] = $input.is(':checked')
             } else {
                 const val = $input.val()
@@ -1325,16 +1443,18 @@ const MapSelection = {
     active: false,
     type: null, // 'bbox' or 'point'
     inputKey: null,
-    $targetInput: null,
+    $targetInput: null, // For single input (point)
+    $bboxInputs: null, // For bbox: {$minLon, $minLat, $maxLon, $maxLat}
     drawing: null,
     clickHandler: null,
 
-    start: function(type, inputKey, $input) {
+    start: function(type, inputKey, $input, $bboxInputs) {
         this.cancel() // Cancel any existing selection
         this.active = true
         this.type = type
         this.inputKey = inputKey
         this.$targetInput = $input
+        this.$bboxInputs = $bboxInputs
 
         if (!Map_ || !Map_.map) {
             console.warn('[MapJobSubmitTool] Map not available for selection')
@@ -1366,13 +1486,24 @@ const MapSelection = {
             // Listen for the draw:created event
             const handler = (e) => {
                 const bounds = e.layer.getBounds()
-                const bbox = [
-                    bounds.getWest(),
-                    bounds.getSouth(),
-                    bounds.getEast(),
-                    bounds.getNorth()
-                ].join(',')
-                this.$targetInput.val(bbox)
+                const west = bounds.getWest()
+                const south = bounds.getSouth()
+                const east = bounds.getEast()
+                const north = bounds.getNorth()
+
+                // If we have bbox inputs object, populate the 4 fields
+                if (this.$bboxInputs) {
+                    this.$bboxInputs.$minLon.val(west.toFixed(6))
+                    this.$bboxInputs.$minLat.val(south.toFixed(6))
+                    this.$bboxInputs.$maxLon.val(east.toFixed(6))
+                    this.$bboxInputs.$maxLat.val(north.toFixed(6))
+                    // Trigger input event to update the "Submit as" field
+                    this.$bboxInputs.$minLon.trigger('input')
+                } else if (this.$targetInput) {
+                    // Fallback: single string input
+                    const bbox = [west, south, east, north].join(',')
+                    this.$targetInput.val(bbox)
+                }
                 this.cancel()
             }
             map.on('draw:created', handler)
@@ -2499,13 +2630,30 @@ function interfaceWithMMGIS() {
         const inputKey = $(this).attr('data-input-key')
         if (!inputKey) return
 
-        const $input = $(this).siblings('input')
-        if (!$input.length) return
-
         const selectType = getMapSelectType(inputKey)
         if (!selectType) return
 
-        MapSelection.start(selectType, inputKey, $input)
+        let $input = null
+        let $bboxInputs = null
+
+        if (selectType === 'bbox') {
+            // Find the bbox input fields in the parent field
+            const $field = $(this).closest('.mjs-field')
+            const $minLon = $field.find('input[data-bbox-field="min_lon"]')
+            const $minLat = $field.find('input[data-bbox-field="min_lat"]')
+            const $maxLon = $field.find('input[data-bbox-field="max_lon"]')
+            const $maxLat = $field.find('input[data-bbox-field="max_lat"]')
+
+            if ($minLon.length && $minLat.length && $maxLon.length && $maxLat.length) {
+                $bboxInputs = { $minLon, $minLat, $maxLon, $maxLat }
+            }
+        } else {
+            // For point inputs, get the sibling input
+            $input = $(this).siblings('input')
+            if (!$input.length) return
+        }
+
+        MapSelection.start(selectType, inputKey, $input, $bboxInputs)
 
         // Update button text to indicate active selection
         $(this).text('Click to cancel').addClass('mjs-map-select-active')
