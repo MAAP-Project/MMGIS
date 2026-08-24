@@ -162,20 +162,26 @@ router.post("/processes/:processID/execution", async (req, res) => {
 
 // Proxy endpoint to get current user info from MAAP API
 router.get("/members/self", async (req, res) => {
-    const baseUrl = req.query.baseUrl;
+    const memberInfoUrl = req.query.memberInfoUrl; // Full URL to the member info endpoint
     const proxyTicket = req.headers['x-proxy-ticket'];
 
-    if (!baseUrl) {
+    if (!memberInfoUrl) {
         return res.status(400).send({
             status: "failure",
-            message: "baseUrl query parameter is required"
+            message: "memberInfoUrl query parameter is required"
+        });
+    }
+
+    // Validate that it's a full URL
+    if (!/^https?:\/\//i.test(memberInfoUrl)) {
+        return res.status(400).send({
+            status: "failure",
+            message: "memberInfoUrl must be a full URL (starting with http:// or https://)"
         });
     }
 
     try {
-        // NOTE that members is not an OGC endpoint but we need it to get the username 
-        const url = baseUrl.replace(/\/ogc\/?$/i, '').replace(/\/+$/, '') + `/members/self`;
-        logger("info", `Proxying request to: ${url}`, req.originalUrl, req);
+        logger("info", `Proxying request to: ${memberInfoUrl}`, req.originalUrl, req);
 
         const headers = {
             'Accept': 'application/json',
@@ -185,26 +191,32 @@ router.get("/members/self", async (req, res) => {
         if (proxyTicket) {
             headers['proxy-ticket'] = proxyTicket;
         } else {
-            logger("warn", `No proxy-ticket header received from client for members/self endpoint`, req.originalUrl, req);
+            logger("warn", `No proxy-ticket header received from client for member info endpoint: ${memberInfoUrl}`, req.originalUrl, req);
         }
 
-        const response = await fetch(url, {
+        const response = await fetch(memberInfoUrl, {
             method: 'GET',
             headers: headers,
         });
 
         if (!response.ok) {
             const responseText = await response.text();
-            logger("error", `MAAP API returned ${response.status}: ${responseText}`, req.originalUrl, req);
-            throw new Error(`MAAP API returned ${response.status}`);
+            logger("error", `Member info API returned ${response.status}: ${responseText}`, req.originalUrl, req);
+            throw new Error(`Member info API returned ${response.status}`);
         }
 
         const data = await response.json();
+
+        // Validate that the response contains an 'id' field
+        if (!data || !data.id) {
+            logger("warn", `Member info endpoint ${memberInfoUrl} did not return an 'id' field`, req.originalUrl, req);
+        }
+
         res.json(data);
     } catch (err) {
         logger(
             "error",
-            "Failed to fetch user info from MAAP API",
+            `Failed to fetch user info from member endpoint: ${memberInfoUrl}`,
             req.originalUrl,
             req,
             err

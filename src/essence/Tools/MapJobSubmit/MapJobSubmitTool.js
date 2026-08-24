@@ -306,11 +306,17 @@ function verifyToken() {
         })
 }
 
-// Fetch the MAAP user ID from /api/members/self
+// Fetch the MAAP user ID from the configured member info endpoint
 // Returns the user ID if successful, null if failed
 function fetchMaapUserId() {
-    const proxyUrl = 'api/mapjobsubmit/members/self?baseUrl=' + encodeURIComponent(Workflows.baseUrl)
-    console.log('[MapJobSubmitTool] Fetching MAAP user ID...')
+    // Use the full URL from tool vars (required to be a full URL)
+    const memberInfoUrl = Workflows.memberInfoUrl
+    if (!memberInfoUrl) {
+        console.error('[MapJobSubmitTool] memberInfoUrl not configured')
+        return Promise.resolve(null)
+    }
+    const proxyUrl = 'api/mapjobsubmit/members/self?memberInfoUrl=' + encodeURIComponent(memberInfoUrl)
+    console.log('[MapJobSubmitTool] Fetching user ID from URL:', memberInfoUrl)
     return mmgisFetch(proxyUrl)
         .then((r) => {
             if (!r.ok) {
@@ -1846,6 +1852,7 @@ const Workflows = {
     vars: null,
     baseUrl: '',
     accountCreationUrl: '',
+    memberInfoUrl: '', // Full URL to member info endpoint, configurable in Configure UI
     selectedProcessID: null,
     selectedAlgorithmId: null,
     selectedVersion: null,
@@ -1876,6 +1883,8 @@ const Workflows = {
         Workflows.baseUrl = Workflows.vars.baseUrl || legacy.baseUrl || ''
         // accountCreationUrl is optional and configurable in the Configure UI
         Workflows.accountCreationUrl = Workflows.vars.accountCreationUrl || ''
+        // memberInfoUrl is a full URL to the member info endpoint, configurable in the Configure UI
+        Workflows.memberInfoUrl = Workflows.vars.memberInfoUrl || ''
         if (!Workflows.expandedIds) Workflows.expandedIds = new Set()
         if (!Workflows.paramsExpandedIds)
             Workflows.paramsExpandedIds = new Set()
