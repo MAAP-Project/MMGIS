@@ -63,6 +63,18 @@
                         "placeholder": "https://api.example.com/members/self"
                     }
                 ]
+            },
+            {
+                "components": [
+                    {
+                        "field": "variables.resourcesConfig",
+                        "name": "Resources/Queues Configuration",
+                        "description": "Configure how job queues are provided. Options: (1) Full URL to fetch queues from API endpoint, (2) Comma-separated list of queue names (e.g., 'queue1,queue2,queue3'), or (3) Leave empty to disable queue selection entirely.",
+                        "type": "text",
+                        "width": 12,
+                        "placeholder": "https://api.example.com/resources OR queue1,queue2,queue3"
+                    }
+                ]
             }
         ]
     }

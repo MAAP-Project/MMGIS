@@ -355,33 +355,39 @@ router.get("/jobs/:jobId", async (req, res) => {
 
 // Proxy endpoint to fetch available algorithm resources/queues
 router.get("/resources", async (req, res) => {
-    const baseUrl = req.query.baseUrl;
+    const resourcesUrl = req.query.resourcesUrl; // Full URL to resources endpoint
     const proxyTicket = req.headers['x-proxy-ticket'];
 
+    if (!resourcesUrl) {
+        return res.status(400).send({
+            status: "failure",
+            message: "resourcesUrl query parameter is required"
+        });
+    }
+
     try {
-        const url = baseUrl.replace(/\/ogc\/?$/i, '').replace(/\/+$/, '') + `/mas/algorithm/resource`;
-        logger("info", `Proxying request to: ${url}`, req.originalUrl, req);
+        logger("info", `Proxying request to: ${resourcesUrl}`, req.originalUrl, req);
 
         const headers = {
             'Accept': 'application/json',
         };
 
-        // Forward x-proxy-ticket header as proxy-ticket to MAAP API
+        // Forward x-proxy-ticket header as proxy-ticket to API
         if (proxyTicket) {
             headers['proxy-ticket'] = proxyTicket;
         } else {
             logger("warn", `No proxy-ticket header received from client for resources endpoint`, req.originalUrl, req);
         }
 
-        const response = await fetch(url, {
+        const response = await fetch(resourcesUrl, {
             method: 'GET',
             headers: headers,
         });
 
         if (!response.ok) {
             const responseText = await response.text();
-            logger("error", `MAAP API returned ${response.status}: ${responseText}`, req.originalUrl, req);
-            throw new Error(`MAAP API returned ${response.status}`);
+            logger("error", `Resources API returned ${response.status}: ${responseText}`, req.originalUrl, req);
+            throw new Error(`Resources API returned ${response.status}`);
         }
 
         const data = await response.json();
@@ -389,7 +395,7 @@ router.get("/resources", async (req, res) => {
     } catch (err) {
         logger(
             "error",
-            "Failed to fetch resources from MAAP API",
+            "Failed to fetch resources from API",
             req.originalUrl,
             req,
             err

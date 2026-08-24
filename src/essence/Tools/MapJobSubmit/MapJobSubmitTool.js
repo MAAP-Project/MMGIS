@@ -377,26 +377,45 @@ function fetchProcessDetails(processID) {
         })
 }
 
-// Fetch available algorithm resources/queues from the MAAP API.
+// Fetch or parse available algorithm resources/queues based on configuration.
+// Returns a promise that resolves to an array of queue names, or null if queues are disabled.
 function fetchResources() {
-    const proxyUrl = 'api/mapjobsubmit/resources?baseUrl=' + encodeURIComponent(Workflows.baseUrl)
-    console.log('[MapJobSubmitTool] Fetching resources via proxy:', mmgisUrl(proxyUrl))
-    return mmgisFetch(proxyUrl)
-        .then((r) => r.json())
-        .then((data) => {
-            console.log('[MapJobSubmitTool] Resources response:', data)
-            // API returns { code, message, queues: [...] }
-            // Extract the queues array
-            if (data && Array.isArray(data.queues)) {
-                return data.queues
-            }
-            console.warn('[MapJobSubmitTool] No queues array in response:', data)
-            return []
-        })
-        .catch((err) => {
-            console.warn('[MapJobSubmitTool] fetchResources failed', err)
-            return []
-        })
+    const resourcesConfig = Workflows.vars.resourcesConfig || ''
+
+    // Mode 1: No configuration - queues disabled
+    if (!resourcesConfig || resourcesConfig.trim() === '') {
+        console.log('[MapJobSubmitTool] No resources configuration - queues disabled')
+        return Promise.resolve(null)
+    }
+
+    // Mode 2: URL - fetch from API
+    if (/^https?:\/\//i.test(resourcesConfig)) {
+        const proxyUrl = 'api/mapjobsubmit/resources?resourcesUrl=' + encodeURIComponent(resourcesConfig)
+        console.log('[MapJobSubmitTool] Fetching resources from URL via proxy:', mmgisUrl(proxyUrl))
+        return mmgisFetch(proxyUrl)
+            .then((r) => r.json())
+            .then((data) => {
+                console.log('[MapJobSubmitTool] Resources response:', data)
+                // API returns { code, message, queues: [...] }
+                // Extract the queues array
+                if (data && Array.isArray(data.queues)) {
+                    return data.queues
+                }
+                console.warn('[MapJobSubmitTool] No queues array in response:', data)
+                return []
+            })
+            .catch((err) => {
+                console.warn('[MapJobSubmitTool] fetchResources failed', err)
+                return []
+            })
+    }
+
+    // Mode 3: Comma-separated list - parse as static array
+    console.log('[MapJobSubmitTool] Using static queue list from config')
+    const queues = resourcesConfig.split(',')
+        .map(q => q.trim())
+        .filter(q => q.length > 0)
+    return Promise.resolve(queues)
 }
 
 // Human-friendly label for a job's endpoint/processID. If we recognize the
@@ -1885,6 +1904,8 @@ const Workflows = {
         Workflows.accountCreationUrl = Workflows.vars.accountCreationUrl || ''
         // memberInfoUrl is a full URL to the member info endpoint, configurable in the Configure UI
         Workflows.memberInfoUrl = Workflows.vars.memberInfoUrl || ''
+        // resourcesConfig can be: URL, comma-separated list, or empty (disabled)
+        Workflows.resourcesConfig = Workflows.vars.resourcesConfig || ''
         if (!Workflows.expandedIds) Workflows.expandedIds = new Set()
         if (!Workflows.paramsExpandedIds)
             Workflows.paramsExpandedIds = new Set()
@@ -2654,10 +2675,13 @@ function interfaceWithMMGIS() {
 
     $formContent.append('<div class="mjs-endpoint-desc" id="mjs-endpoint-desc"></div>')
 
-    $formContent.append('<div class="mjs-section-label">Queue (required)</div>')
+    // Queue section - wrapped in a container for easy show/hide
+    const $queueSection = $('<div class="mjs-queue-section"></div>')
+    $queueSection.append('<div class="mjs-section-label">Queue</div>')
     const $queueSelect = $('<select id="mjs-queue-select" disabled></select>')
     $queueSelect.append('<option value="">Enter token to see queues</option>')
-    $formContent.append($queueSelect)
+    $queueSection.append($queueSelect)
+    $formContent.append($queueSection)
 
     $formContent.append('<div class="mjs-section-label">Tag</div>')
     const $tagInput = $(
@@ -3128,15 +3152,24 @@ function interfaceWithMMGIS() {
 
     function populateQueueDropdown() {
         const $select = $queueSelect
-        $select.empty().append('<option value="">Loading queues...</option>')
-        $select.attr('disabled', true)
+        const $queueSection = $select.parent()
 
-        // Fetch resources from the MAAP API
+        // Fetch resources from the API or config
         fetchResources().then((resources) => {
+            // Mode 1: Queues disabled (resources is null)
+            if (resources === null) {
+                console.log('[MapJobSubmitTool] Queues disabled - hiding queue field')
+                $queueSection.hide()
+                return
+            }
+
+            // Mode 2 & 3: Show queue field
+            $queueSection.show()
             $select.empty().append('<option value="">Select queue...</option>')
 
             if (!resources || resources.length === 0) {
-                console.warn('[MapJobSubmitTool] No resources returned from API')
+                console.warn('[MapJobSubmitTool] No resources returned')
+                $select.append('<option value="">No queues available</option>')
                 $select.attr('disabled', false)
                 return
             }
@@ -3317,15 +3350,26 @@ function interfaceWithMMGIS() {
             return
         }
 
-        const queue = $queueSelect.val()
-        if (!queue) {
-            window.alert('Please select a queue.')
-            $queueSelect.trigger('focus')
-            return
+        // Only validate queue if the queue section is visible (queues enabled)
+        const $queueSection = $('.mjs-queue-section')
+        if ($queueSection.is(':visible')) {
+            const queue = $queueSelect.val()
+            if (!queue) {
+                window.alert('Please select a queue.')
+                $queueSelect.trigger('focus')
+                return
+            }
         }
+
         // Sanitize tag/name input to prevent XSS
         const tag = sanitizeInput($tagInput.val().trim())
         const payload = collectPayload()
+
+        // Remove queue from payload if queues are disabled
+        if (!$queueSection.is(':visible') && payload.queue !== undefined) {
+            delete payload.queue
+        }
+
         $submit.attr('disabled', true).text('Submitting…')
         Workflows.submit(Workflows.selectedProcessID, payload, tag)
             .then(() => {
