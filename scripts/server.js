@@ -16,7 +16,7 @@ var swaggerDocumentMain = require("../docs/mmgis-openapi.json");
 const createError = require("http-errors");
 const cors = require("cors");
 const logger = require("../API/logger");
-const { rateLimit } = require("express-rate-limit");
+const { apilimiter, authLimiter, computeLimiter } = require("./rateLimiters");
 const compression = require("compression");
 
 const session = require("express-session");
@@ -29,7 +29,13 @@ const { sequelize } = require("../API/connection");
 
 const setups = require("../API/setups");
 
-const { updateTools, updateComponents } = require("../API/updateTools");
+const {
+  updateTools,
+  updateComponents,
+  updateInteractions,
+  updateLayerTypes,
+  updateLayerAttachments,
+} = require("../API/updateTools");
 
 const { websocket } = require("../API/websocket");
 
@@ -64,11 +70,6 @@ const app = express();
 
 const isDocker = utils.isDocker();
 process.env.IS_DOCKER = isDocker ? "true" : "false";
-
-const apilimiter = rateLimit({
-  windowMs: 5 * 60 * 1000, // 5 minutes
-  max: 20000, // limit each IP to 100 requests per windowMs
-});
 
 // Load the permissions.json file, which maps LDAP groups to permission sets.
 // This application has two permission sets: "users" and "admins".
@@ -129,6 +130,18 @@ if (sessionSecret.length < 24) {
   );
   process.exit(1);
 }
+// Public static assets - served before session middleware to avoid unnecessary cookies
+app.use(`${ROOT_PATH}/public`, express.static(path.join(rootDir, "/public")));
+app.use(
+  `${ROOT_PATH}/README.md`,
+  express.static(path.join(rootDir, "/README.md")),
+);
+if (process.argv.includes("--with_examples"))
+  app.use(
+    `${ROOT_PATH}/examples`,
+    express.static(path.join(rootDir, "/examples")),
+  );
+
 app.use(
   session({
     secret: sessionSecret,
@@ -317,6 +330,8 @@ function ensureAdmin(
       url.endsWith("/api/geodatasets/get") ||
       url.endsWith("/api/geodatasets/intersect") ||
       url.endsWith("/api/geodatasets/aggregations") ||
+      url.endsWith("/api/geodatasets/schema") ||
+      url.endsWith("/api/geodatasets/bulk_aggregations") ||
       url.endsWith("/api/geodatasets/search") ||
       url.endsWith("/api/datasets/get") ||
       req.session.permission === "111" ||
@@ -350,7 +365,7 @@ function ensureAdmin(
       res.render("adminlogin", {
         user: req.user,
         VERSION: configurePackageJson.version,
-        ROOT_PATH: isDevEnv ? "" : process.env.ROOT_PATH || "",
+        ROOT_PATH: isDevEnv ? "" : (process.env.ROOT_PATH ? process.env.ROOT_PATH + "/" : ""),
       });
       return;
     }
@@ -473,7 +488,7 @@ function ensureUser() {
           CLEARANCE_NUMBER: process.env.CLEARANCE_NUMBER || "CL##-####",
           CONTACT_INFO: process.env.CONTACT_INFO || "None Provided",
           AUTH_LOCAL_ALLOW_SIGNUP: process.env.AUTH_LOCAL_ALLOW_SIGNUP || false,
-          ROOT_PATH: isDevEnv ? "" : process.env.ROOT_PATH || "",
+          ROOT_PATH: isDevEnv ? "" : (process.env.ROOT_PATH ? process.env.ROOT_PATH + "/" : ""),
         });
       }
     }
@@ -634,6 +649,7 @@ app.use(cors());
 /*Require all dynamic backend setup scripts
 and return functions that bulk run their functions
 */
+console.log(chalk.cyan("\nPlugging in Backends..."));
 setups.getBackendSetups(function (setups) {
   //Sync all tables
   sequelize
@@ -658,7 +674,7 @@ setups.getBackendSetups(function (setups) {
       ),
     );
 
-  // STATICS
+  // Authenticated static routes - must remain after session middleware
 
   app.use(
     `${ROOT_PATH}/build`,
@@ -671,10 +687,6 @@ setups.getBackendSetups(function (setups) {
     express.static(path.join(rootDir, "/docs")),
   );
   app.use(
-    `${ROOT_PATH}/README.md`,
-    express.static(path.join(rootDir, "/README.md")),
-  );
-  app.use(
     `${ROOT_PATH}/configure/build`,
     ensureUser(),
     express.static(path.join(rootDir, "/configure/build")),
@@ -685,12 +697,6 @@ setups.getBackendSetups(function (setups) {
     express.static(path.join(rootDir, "/configure/public")),
   );
 
-  if (process.argv.includes("--with_examples"))
-    app.use(
-      `${ROOT_PATH}/examples`,
-      express.static(path.join(rootDir, "/examples")),
-    );
-  app.use(`${ROOT_PATH}/public`, express.static(path.join(rootDir, "/public")));
   app.use(
     `${ROOT_PATH}/Missions`,
     ensureUser(),
@@ -706,8 +712,7 @@ setups.getBackendSetups(function (setups) {
       ROOT_PATH:
         process.env.NODE_ENV === "development"
           ? ""
-          : /*(process.env.EXTERNAL_ROOT_PATH || "") +*/
-            process.env.ROOT_PATH || "",
+          : (process.env.ROOT_PATH ? process.env.ROOT_PATH + "/" : ""),
       CLEARANCE_NUMBER: process.env.CLEARANCE_NUMBER || "CL##-####",
       CONTACT_INFO: process.env.CONTACT_INFO || "None Provided",
     });
@@ -733,7 +738,7 @@ setups.getBackendSetups(function (setups) {
 
   // Validate envs
   if (process.env.NODE_ENV === "development") {
-    console.log(chalk.cyan("Validating Environment Variables...\n"));
+    console.log(chalk.cyan("\nValidating Environment Variables..."));
   }
   testEnv.test(setups.envs, port);
 
@@ -741,11 +746,20 @@ setups.getBackendSetups(function (setups) {
   // We're only doing this for dev because we're assuming
   // build will also call this.
   if (process.env.NODE_ENV === "development") {
-    console.log(chalk.cyan("Updating Tools...\n"));
+    console.log(chalk.cyan("\nPlugging in Tools..."));
     updateTools();
 
-    console.log(chalk.cyan("Updating Components...\n"));
+    console.log(chalk.cyan("\nPlugging in Components..."));
     updateComponents();
+
+    console.log(chalk.cyan("\nPlugging in Interactions..."));
+    updateInteractions();
+
+    console.log(chalk.cyan("\nPlugging in Layer Types..."));
+    updateLayerTypes();
+
+    console.log(chalk.cyan("\nPlugging in Layer Attachments..."));
+    updateLayerAttachments();
   }
 
   //////Setups Init//////
@@ -833,10 +847,29 @@ setups.getBackendSetups(function (setups) {
     //////Setups Started//////
     setups.started(s);
 
-    // error handler
+    // 404 handler
     app.all("/{*splat}", (req, res, next) => {
-      // render the error page
       res.status(404).render("error");
+    });
+
+    // Global error handler — catches errors forwarded by next(err) or thrown
+    // in async route handlers. Prevents unhandled errors from crashing the
+    // process; returns a 500 response instead.
+    app.use((err, req, res, next) => {
+      logger(
+        "error",
+        "Unhandled route error.",
+        req.originalUrl,
+        req,
+        err,
+      );
+      if (res.headersSent) {
+        return next(err);
+      }
+      res.status(500).send({
+        status: "error",
+        message: "Internal server error.",
+      });
     });
 
     logger(
@@ -846,7 +879,7 @@ setups.getBackendSetups(function (setups) {
     );
 
     if (process.env.ENABLE_MMGIS_WEBSOCKETS) {
-      console.log(chalk.cyan("Starting websocket...\n"));
+      console.log(chalk.cyan("\nStarting websocket..."));
       websocket.init(httpServer);
     }
   });
@@ -864,7 +897,6 @@ function setupDevServer() {
   const HOST = "localhost";
   const config = configFactory("development");
   const protocol = process.env.HTTPS === "true" ? "https" : "http";
-  const isInteractive = process.stdout.isTTY;
   const { URL } = require("url");
   const lanUrl = new URL(`${protocol}://${HOST}:${port}${paths.publicUrlOrPath.slice(0, -1)}`);
   const urls = {
@@ -937,10 +969,6 @@ function setupDevServer() {
     if (err) {
       return console.log(err);
     }
-    if (isInteractive) {
-      console.clear();
-    }
-
     // We used to support resolving modules according to `NODE_PATH`.
     // This now has been deprecated in favor of jsconfig/tsconfig.json
     // This lets you use absolute paths in imports inside large monorepos:
@@ -952,7 +980,7 @@ function setupDevServer() {
       );
       console.log();
     }
-    console.log(chalk.cyan("Starting the development server...\n"));
+    console.log(chalk.cyan("\nStarting the development server..."));
   });
 
   ["SIGINT", "SIGTERM"].forEach(function (sig) {

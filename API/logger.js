@@ -32,6 +32,11 @@ const filelogger = winston.createLogger({
   ],
 });
 
+function sanitizeForLog(str) {
+  if (typeof str !== "string") return str;
+  return str.replace(/\x1B\[[0-9;]*m/g, "").replace(/[\x00-\x08\x0B-\x1F\x7F]/g, " ");
+}
+
 const logger = function (level, message, caller, req, err) {
   let log = {
     level: level,
@@ -79,6 +84,8 @@ const logger = function (level, message, caller, req, err) {
       log.err = err;
     }
 
+    log.msg = sanitizeForLog(log.msg);
+    log.caller = sanitizeForLog(log.caller);
     log = JSON.stringify(log);
   } catch (err2) {
     log.err = err2;
@@ -100,15 +107,20 @@ const logger = function (level, message, caller, req, err) {
           chalk.black(chalk.bgGreenBright("\r " + level + " "))
         );
         break;
+      case "loaded":
+        process.stdout.write(
+          chalk.white(chalk.bgHex("#a855f7")("\r " + level + " "))
+        );
+        break;
       default:
         process.stdout.write(
           chalk.black(chalk.bgHex("#009eff")("\r " + level + " "))
         );
     }
-    if (message) console.log(" ", message);
-    if (caller && level != "success" && level != "info")
-      console.log("   Caller:", caller);
-    if (err) console.log("   Error:", err);
+    if (message) console.log(" ", sanitizeForLog(message));
+    if (caller && level != "success" && level != "info" && level != "loaded")
+      console.log("   Caller:", sanitizeForLog(caller));
+    if (err) console.log("   Error:", sanitizeForLog(err instanceof Error ? err.stack || String(err) : String(err)));
   } else {
     console.log(log);
   }

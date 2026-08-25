@@ -199,7 +199,11 @@ const ToolModal = (props) => {
             if (currentValue != null)
               setIn(currentTool, c.field.split("."), currentValue, true);
 
-            if (c.type === "dropdown" || c.type === "colordropdown") {
+            if (
+              c.type === "dropdown" ||
+              c.type === "colordropdown" ||
+              c.type === "colorramp"
+            ) {
               const currentValue = getIn(currentTool, c.field);
               if (currentValue == null) {
                 setIn(currentTool, c.field.split("."), c.options[0], true);
@@ -320,7 +324,7 @@ const ToolModal = (props) => {
               className={c.text}
               variant="filled"
               size="small"
-              value={tool?.icon || toolConfig?.defaultIcon || ""}
+              value={tool?.icon || toolConfig?.defaultIcon || "puzzle-outline"}
               label={"MDI Icon Name"}
               onChange={(e) => {
                 const nextConfiguration = JSON.parse(

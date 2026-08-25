@@ -78,6 +78,22 @@ WORKDIR /usr/src/app
 # Now copy source code - changes here won't invalidate dependency layers
 COPY . .
 
+# Resolve per-plugin dependencies (writes plugin-package.json,
+# plugin-python-requirements.txt, plugin-conda-deps.txt) and install
+# whatever each plugin declared on top of the root deps.
+RUN node scripts/resolve-plugin-deps.js
+
+RUN --mount=type=cache,target=/root/.npm \
+    node scripts/install-plugin-deps.js
+
+RUN if [ -s plugin-python-requirements.txt ] && grep -qv '^#' plugin-python-requirements.txt; then \
+        echo "Installing plugin pip dependencies..." && \
+        source ~/.bashrc && \
+        micromamba run -n mmgis pip install -r plugin-python-requirements.txt; \
+    else \
+        echo "No plugin pip dependencies to install."; \
+    fi
+
 # Build MMGIS main
 RUN npm run build
 
@@ -119,6 +135,18 @@ COPY --from=builder /usr/src/app/package-lock.json ./package-lock.json
 RUN --mount=type=cache,target=/root/.npm \
     npm ci --only=production
 
+# Re-install plugin npm deps in the runtime stage. Plugin deps are
+# installed in the builder with `--no-save --no-package-lock`, so they
+# are NOT recorded in `package.json`/`package-lock.json` and would
+# otherwise be lost by the `npm ci` above. Backend plugins that
+# `require()` their declared npm deps at runtime would fail without
+# this step. (Frontend plugin deps are unaffected because webpack
+# bundled them into `./build` during the builder stage.)
+COPY --from=builder /usr/src/app/plugin-package.json ./plugin-package.json
+COPY --from=builder /usr/src/app/scripts/install-plugin-deps.js ./scripts/install-plugin-deps.js
+RUN --mount=type=cache,target=/root/.npm \
+    node scripts/install-plugin-deps.js
+
 # Copy built artifacts from builder
 COPY --from=builder /usr/src/app/build ./build
 COPY --from=builder /usr/src/app/configure/build ./configure/build
@@ -142,6 +170,7 @@ COPY --from=builder /usr/src/app/adjacent-servers ./adjacent-servers
 COPY --from=builder /usr/src/app/examples ./examples
 COPY --from=builder /usr/src/app/private ./private
 COPY --from=builder /usr/src/app/blueprints ./blueprints
+COPY --from=builder /usr/src/app/plugins ./plugins
 
 RUN chmod 755 _docker-entrypoint.sh
 
