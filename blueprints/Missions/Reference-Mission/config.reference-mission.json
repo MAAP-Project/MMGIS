@@ -4285,15 +4285,6 @@
         "animationMP4": true,
         "animationPNG": false
       }
-    },
-    {
-      "name": "Workflows",
-      "icon": "cog-sync",
-      "js": "WorkflowsTool",
-      "variables": {
-        "baseUrl": "",
-        "pollIntervalMs": 2000
-      }
     }
   ]
 }

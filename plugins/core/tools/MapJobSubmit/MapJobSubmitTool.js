@@ -2077,6 +2077,13 @@ const Workflows = {
 
     refreshFromServer: function () {
         console.log('[MapJobSubmitTool] refreshFromServer called')
+
+        // Check if authenticated before fetching jobs
+        if (!Workflows.personalAccessToken) {
+            console.log('[MapJobSubmitTool] Not authenticated - skipping job refresh')
+            return Promise.resolve()
+        }
+
         // Update the last refresh timestamp
         Workflows.lastRefreshTime = Date.now()
         updateLastRefreshDisplay()
@@ -2178,6 +2185,12 @@ const Workflows = {
     },
 
     fetchPageDetails: function () {
+        // Check if authenticated before fetching job details from MAAP API
+        if (!Workflows.personalAccessToken) {
+            console.log('[MapJobSubmitTool] Not authenticated - skipping fetch page details')
+            return Promise.resolve()
+        }
+
         const start = Workflows.page * PAGE_SIZE
         const slice = Workflows.getVisibleJobIds().slice(
             start,
@@ -2219,6 +2232,16 @@ const Workflows = {
     },
 
     pollAll: function () {
+        // Check if authenticated before polling
+        if (!Workflows.personalAccessToken) {
+            console.log('[MapJobSubmitTool] Not authenticated - stopping poll timer')
+            if (Workflows.pollTimer) {
+                clearInterval(Workflows.pollTimer)
+                Workflows.pollTimer = null
+            }
+            return
+        }
+
         const ids = Object.keys(Workflows.jobs).filter(
             (id) => !isTerminal(Workflows.jobs[id].status)
         )
@@ -2701,7 +2724,7 @@ function interfaceWithMMGIS() {
     $root.append(
         '<div class="mjs-jobs"><div class="mjs-jobs-header"><div class="mjs-section-label">Jobs</div><div class="mjs-jobs-header-btns"><button class="mjs-import-btn" type="button">Import Job</button><button class="mjs-refresh-btn" type="button">Refresh</button><span class="mjs-last-refresh" id="mjs-last-refresh"></span></div></div><input type="text" class="mjs-jobs-filter" placeholder="Filter by name or id…" spellcheck="false" /><div class="mjs-jobs-list"></div><div class="mjs-pagination"></div></div>'
     )
-    Workflows.renderJobs()
+    // Don't call renderJobs() here - it will be called after authentication in renderAuthenticated()
 
     let filterFetchTimer = null
     $root.find('.mjs-jobs-filter').on('input', function () {
@@ -3262,12 +3285,21 @@ function interfaceWithMMGIS() {
         )
         $row.find('.mjs-signout').on('click', function (e) {
             e.preventDefault()
+            // Stop polling
+            if (Workflows.pollTimer) {
+                clearInterval(Workflows.pollTimer)
+                Workflows.pollTimer = null
+            }
             // Clear the token and user ID from memory
             Workflows.personalAccessToken = null
             Workflows.maapUserId = null
             // Clear jobs
             Workflows.jobs = {}
             Workflows.jobIds = []
+            Workflows.lastRefreshTime = null
+            // Hide jobs section and form content
+            $('.mjs-jobs').hide()
+            $('#mjs-form-content').hide()
             renderUnauthenticated()
         })
 
