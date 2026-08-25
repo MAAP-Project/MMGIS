@@ -139,7 +139,29 @@ router.post("/processes/:processID/execution", async (req, res) => {
         });
 
         if (!response.ok) {
-            throw new Error(`Workflows API returned ${response.status}`);
+            // Try to get the actual error message from the API response
+            let errorData;
+            try {
+                errorData = await response.json();
+            } catch (jsonErr) {
+                // If JSON parsing fails, use generic error
+                errorData = { detail: response.statusText || 'Unknown error' };
+            }
+
+            logger(
+                "error",
+                `Workflows API returned ${response.status}: ${JSON.stringify(errorData)}`,
+                req.originalUrl,
+                req
+            );
+
+            // Return the actual API error to the client with the original status code
+            return res.status(response.status).send({
+                status: "failure",
+                message: "Failed to submit job to Workflows API",
+                apiError: errorData,
+                statusCode: response.status
+            });
         }
 
         const data = await response.json();

@@ -701,9 +701,9 @@ function buildFormFromInputs($parent, inputs, $queueSelect, $tagInput) {
 
             $field.append($bboxGrid)
 
-            // Add "Submit as" text input showing the actual formatted values
+            // Add "Submit as" text input showing the raw formatted values
             const $formatLabel = $('<div class="mjs-bbox-format-label">Submit as</div>')
-            const $formatInput = $('<input type="text" class="mjs-bbox-format-input" />')
+            const $formatInput = $('<input type="text" class="mjs-bbox-format-input" readonly />')
 
             // Set initial placeholder text
             let placeholderText = ''
@@ -715,7 +715,7 @@ function buildFormFromInputs($parent, inputs, $queueSelect, $tagInput) {
             }
             $formatInput.val(placeholderText)
 
-            // Function to update the "Submit as" field based on current values
+            // Function to update the "Submit as" field with raw values
             const updateFormatDisplay = () => {
                 const minLon = $minLon.val()
                 const minLat = $minLat.val()
@@ -758,15 +758,22 @@ function buildFormFromInputs($parent, inputs, $queueSelect, $tagInput) {
                             }
                         }
 
-                        // Create new rectangle
+                        // Create a single rectangle (Leaflet handles wrapping automatically)
+                        // Note: For dateline-crossing bboxes where minLon > maxLon,
+                        // the rectangle will wrap around the world as intended
                         const rect = L.rectangle([[minLat, minLon], [maxLat, maxLon]], {
                             color: '#ff8800',
                             weight: 2,
                             fillOpacity: 0.2
                         }).addTo(map)
-                        rect.bindPopup(`Selected Bbox<br>W: ${minLon.toFixed(6)}<br>S: ${minLat.toFixed(6)}<br>E: ${maxLon.toFixed(6)}<br>N: ${maxLat.toFixed(6)}`)
 
-                        // Store the new rectangle
+                        const crossesDateline = minLon > maxLon
+                        const popupText = crossesDateline
+                            ? `Selected Bbox (crosses dateline)<br>W: ${minLon.toFixed(6)}<br>S: ${minLat.toFixed(6)}<br>E: ${maxLon.toFixed(6)}<br>N: ${maxLat.toFixed(6)}<br><small>Spans ${(360 - (minLon - maxLon)).toFixed(1)}° longitude</small>`
+                            : `Selected Bbox<br>W: ${minLon.toFixed(6)}<br>S: ${minLat.toFixed(6)}<br>E: ${maxLon.toFixed(6)}<br>N: ${maxLat.toFixed(6)}`
+                        rect.bindPopup(popupText)
+
+                        // Store the rectangle
                         MapSelection.persistentLayers[key] = rect
                     }
                 }
@@ -923,7 +930,7 @@ function buildFormFromInputs($parent, inputs, $queueSelect, $tagInput) {
             const { key, $input, type, isBbox } = ref
 
             if (isBbox) {
-                // Collect bbox coordinates
+                // Collect bbox coordinates - use raw values as-is
                 const minLon = parseFloat(ref.$minLon.val())
                 const minLat = parseFloat(ref.$minLat.val())
                 const maxLon = parseFloat(ref.$maxLon.val())
@@ -931,6 +938,8 @@ function buildFormFromInputs($parent, inputs, $queueSelect, $tagInput) {
 
                 // Only add if all values are present
                 if (!isNaN(minLon) && !isNaN(minLat) && !isNaN(maxLon) && !isNaN(maxLat)) {
+                    console.log(`[MapJobSubmitTool] Submitting bbox: ${minLon},${minLat},${maxLon},${maxLat}`)
+
                     // Order: [min_longitude, min_latitude, max_longitude, max_latitude]
                     // Format based on the input type from the algorithm
                     if (type === 'array') {
@@ -1566,18 +1575,34 @@ const MapInputDisplay = {
         // Draw bounding box if we have it
         if (bbox) {
             console.log('[MapJobSubmitTool] Attempting to display bbox:', bbox)
-            const parts = String(bbox).split(',').map(s => parseFloat(s.trim()))
+            // Handle both string and array formats
+            let parts
+            if (Array.isArray(bbox)) {
+                parts = bbox.map(v => parseFloat(v))
+            } else {
+                parts = String(bbox).split(',').map(s => parseFloat(s.trim()))
+            }
+
             if (parts.length === 4 && parts.every(n => !isNaN(n))) {
                 const [west, south, east, north] = parts
                 console.log('[MapJobSubmitTool] Drawing bbox:', { west, south, east, north })
+
                 try {
+                    // Create a single rectangle (Leaflet handles wrapping automatically)
                     const rect = L.rectangle([[south, west], [north, east]], {
                         color: '#ffb74d',
                         fillColor: '#ffb74d',
                         fillOpacity: 0.15,
                         weight: 2
                     }).addTo(map)
-                    rect.bindPopup(`Job Input<br>Bounding Box:<br>W: ${west}, S: ${south}<br>E: ${east}, N: ${north}`)
+
+                    // Check if this is a dateline-crossing bbox (west > east)
+                    const crossesDateline = west > east
+                    const popupText = crossesDateline
+                        ? `Job Input (crosses dateline)<br>Bounding Box:<br>W: ${west}, S: ${south}<br>E: ${east}, N: ${north}<br><small>Spans ${(360 - (west - east)).toFixed(1)}° longitude</small>`
+                        : `Job Input<br>Bounding Box:<br>W: ${west}, S: ${south}<br>E: ${east}, N: ${north}`
+                    rect.bindPopup(popupText)
+
                     layers.push(rect)
 
                     // Zoom to bbox
@@ -1753,17 +1778,29 @@ const MapSelection = {
             // Listen for the draw:created event
             const handler = (e) => {
                 const layer = e.layer
-                const bounds = layer.getBounds()
-                const west = bounds.getWest()
-                const south = bounds.getSouth()
-                const east = bounds.getEast()
-                const north = bounds.getNorth()
 
-                // Add the rectangle to the map so it persists
+                // Keep the drawn rectangle as-is on the map (don't alter it!)
                 layer.addTo(map)
-                layer.bindPopup(`Selected Bbox<br>W: ${west.toFixed(6)}<br>S: ${south.toFixed(6)}<br>E: ${east.toFixed(6)}<br>N: ${north.toFixed(6)}`)
 
-                // Store the layer so it persists until job submission (one per button)
+                // Get corner coordinates - use RAW values, don't normalize yet
+                const latLngs = layer.getLatLngs()[0]
+                const lngs = latLngs.map(ll => ll.lng)  // Keep raw values
+                const lats = latLngs.map(ll => ll.lat)
+
+                // Find the extremes - these are the RAW unwrapped coordinates
+                const south = Math.min(...lats)
+                const north = Math.max(...lats)
+                const west = Math.min(...lngs)   // Can be < -180
+                const east = Math.max(...lngs)   // Can be > 180
+
+                console.log('[MapJobSubmitTool] Raw bbox from draw:', { west, south, east, north })
+
+                // Display popup with raw coordinates
+                const span = east - west
+                const popupText = `Selected Bbox<br>W: ${west.toFixed(6)}<br>S: ${south.toFixed(6)}<br>E: ${east.toFixed(6)}<br>N: ${north.toFixed(6)}<br><small>Spans ${span.toFixed(1)}° longitude</small>`
+                layer.bindPopup(popupText)
+
+                // Store the drawn layer
                 this.persistentLayers[this.inputKey] = layer
 
                 // If we have bbox inputs object, populate the 4 fields
@@ -2021,7 +2058,31 @@ const Workflows = {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload || {}),
         })
-            .then((r) => r.json())
+            .then((r) => {
+                // Check if response is successful (2xx status code)
+                if (!r.ok) {
+                    // Non-2xx response - parse error and reject
+                    return r.json().then((errorData) => {
+                        console.error('[MapJobSubmitTool] Job submission failed:', errorData)
+
+                        // The proxy wraps the actual API error in the 'apiError' field
+                        let actualError = errorData.apiError || errorData
+
+                        // Extract error message from the actual API response
+                        const errorMsg = actualError.detail || actualError.title || actualError.message || errorData.message || 'Unknown error'
+                        const statusCode = errorData.statusCode || actualError.status || r.status
+
+                        throw new Error(`Job submission failed (${statusCode}): ${errorMsg}`)
+                    }).catch((jsonErr) => {
+                        // If JSON parsing fails, throw a generic error
+                        if (jsonErr.message && jsonErr.message.includes('Job submission failed')) {
+                            throw jsonErr // Re-throw the error we just created
+                        }
+                        throw new Error(`Job submission failed (${r.status}): ${r.statusText}`)
+                    })
+                }
+                return r.json()
+            })
             .then((data) => {
                 console.log('[MapJobSubmitTool] Job submit response:', data)
                 const jobId = data.jobID
@@ -2061,10 +2122,7 @@ const Workflows = {
                         return jobId
                     })
             })
-            .catch((err) => {
-                console.error('[MapJobSubmitTool] Job submit failed:', err)
-                return null
-            })
+            // NOTE: No .catch() here - let errors propagate to the caller so they can display to user
     },
 
     ensurePolling: function () {
@@ -3412,7 +3470,10 @@ function interfaceWithMMGIS() {
             })
             .catch((err) => {
                 $submit.attr('disabled', false).text('Submit')
-                window.alert(`Workflows submit failed: ${err.message}`)
+                console.error('[MapJobSubmitTool] Submit error:', err)
+                // Display error message to user
+                const errorMsg = err.message || 'Unknown error occurred'
+                window.alert(`Job Submission Failed\n\n${errorMsg}`)
             })
     })
 
