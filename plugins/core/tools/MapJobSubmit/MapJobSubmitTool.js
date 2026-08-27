@@ -3275,7 +3275,7 @@ function interfaceWithMMGIS() {
     function enableSubmit() {
         // Populate the algorithm dropdown now that we have PROCESSES
         populateAlgorithmDropdown()
-        $submit.text('Submit').attr('disabled', false)
+        $submit.text('Submit Job').attr('disabled', false)
     }
 
     function renderUnauthenticated() {
@@ -3373,7 +3373,7 @@ function interfaceWithMMGIS() {
         populateQueueDropdown()
 
         // Enable submit button
-        $submit.text('Submit').attr('disabled', false)
+        $submit.text('Submit Job').attr('disabled', false)
 
         // Show jobs section now that user is authenticated
         $('.mjs-jobs').show()
@@ -3463,13 +3463,13 @@ function interfaceWithMMGIS() {
         $submit.attr('disabled', true).text('Submitting…')
         Workflows.submit(Workflows.selectedProcessID, payload, tag)
             .then(() => {
-                $submit.attr('disabled', false).text('Submit')
+                $submit.attr('disabled', false).text('Submit Job')
                 $tagInput.val('')
                 // Clear any persistent map selections (bbox rectangles, point markers)
                 MapSelection.clearPersistentLayers()
             })
             .catch((err) => {
-                $submit.attr('disabled', false).text('Submit')
+                $submit.attr('disabled', false).text('Submit Job')
                 console.error('[MapJobSubmitTool] Submit error:', err)
                 // Display error message to user
                 const errorMsg = err.message || 'Unknown error occurred'
