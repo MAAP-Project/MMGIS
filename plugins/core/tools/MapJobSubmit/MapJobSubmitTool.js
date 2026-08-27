@@ -1990,9 +1990,8 @@ const Workflows = {
             clearInterval(Workflows.authPollTimer)
             Workflows.authPollTimer = null
         }
-        // Clear personal access token and MAAP user ID from memory
-        Workflows.personalAccessToken = null
-        Workflows.maapUserId = null
+        // Note: Do NOT clear personalAccessToken and maapUserId here
+        // They should persist across tool switches so user stays logged in
     },
 
     // Authenticates using a personal access token by verifying it with the /jobs endpoint
@@ -3492,8 +3491,14 @@ function interfaceWithMMGIS() {
         )
         $submit.text('Not configured').attr('disabled', true)
     } else {
-        // Show the token input form immediately
-        renderUnauthenticated()
+        // Check if user is already authenticated (token persists across tool switches)
+        if (Workflows.personalAccessToken && Workflows.maapUserId) {
+            // User is already authenticated - render authenticated state
+            renderAuthenticated()
+        } else {
+            // Show the token input form
+            renderUnauthenticated()
+        }
         // Populate algorithm dropdown if processes are already loaded
         populateAlgorithmDropdown()
     }
