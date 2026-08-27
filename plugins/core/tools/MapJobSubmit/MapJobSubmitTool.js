@@ -82,7 +82,6 @@ function mmgisFetch(path, init) {
     // Add x-proxy-ticket header if token is available (X- prefix is required for custom headers)
     if (Workflows.personalAccessToken) {
         headers['x-proxy-ticket'] = Workflows.personalAccessToken
-        console.log('[MapJobSubmitTool] Adding x-proxy-ticket header to request:', path)
     } 
 
     return fetch(mmgisUrl(path), {
@@ -94,23 +93,19 @@ function mmgisFetch(path, init) {
 
 // Returns { [workflow_id]: { endpoint, payload, name, ts } }
 function fetchSubmittedRegistry() {
-    console.log('[MapJobSubmitTool] Fetching submitted registry from DB...')
     // Include maap_user_id query param to filter by MAAP user
     const url = Workflows.maapUserId
         ? `api/mapjobsubmit-history?maap_user_id=${encodeURIComponent(Workflows.maapUserId)}`
         : 'api/mapjobsubmit-history'
     return mmgisFetch(url)
         .then((r) => {
-            console.log('[MapJobSubmitTool] Registry fetch response status:', r.status)
             return r.json()
         })
         .then((d) => {
-            console.log('[MapJobSubmitTool] Registry fetch data:', d)
             if (!d || d.status !== 'success' || !Array.isArray(d.body)) {
                 console.warn('[MapJobSubmitTool] Invalid registry response format:', d)
                 return {}
             }
-            console.log('[MapJobSubmitTool] Registry has', d.body.length, 'entries')
             const out = {}
             d.body.forEach((row) => {
                 if (!row || !row.workflow_id) return
@@ -123,7 +118,6 @@ function fetchSubmittedRegistry() {
                         : Date.now(),
                 }
             })
-            console.log('[MapJobSubmitTool] Built registry with', Object.keys(out).length, 'jobs')
             return out
         })
         .catch((err) => {
@@ -147,7 +141,6 @@ function recordSubmittedJob(jobId, endpoint, payload, name) {
         .then((r) => r.json())
         .then((data) => {
             if (data && data.status === 'success') {
-                console.log('[MapJobSubmitTool] Job recorded to DB successfully:', jobId)
                 return data
             }
             throw new Error('Failed to record job')
@@ -172,7 +165,6 @@ function deleteJobFromDatabase(jobId) {
         .then((r) => r.json())
         .then((data) => {
             if (data && data.status === 'success') {
-                console.log('[MapJobSubmitTool] Job deleted from DB successfully:', jobId)
                 return data
             }
             throw new Error(data.message || 'Failed to delete job')
@@ -311,7 +303,6 @@ function verifyToken() {
         })
         .then((data) => {
             if (data === false) return false // 403 or error
-            console.log('[MapJobSubmitTool] Token verified successfully')
             return true
         })
         .catch((err) => {
@@ -330,7 +321,6 @@ function fetchMaapUserId() {
         return Promise.resolve(null)
     }
     const proxyUrl = 'api/mapjobsubmit/members/self?memberInfoUrl=' + encodeURIComponent(memberInfoUrl)
-    console.log('[MapJobSubmitTool] Fetching user ID from URL:', memberInfoUrl)
     return mmgisFetch(proxyUrl)
         .then((r) => {
             if (!r.ok) {
@@ -344,7 +334,6 @@ function fetchMaapUserId() {
                 console.warn('[MapJobSubmitTool] No user ID in response:', data)
                 return null
             }
-            console.log('[MapJobSubmitTool] Fetched MAAP user ID:', data.id)
             return data.id
         })
         .catch((err) => {
@@ -357,16 +346,13 @@ function fetchMaapUserId() {
 // Uses MMGIS backend proxy to avoid CORS issues.
 function fetchProcesses() {
     const proxyUrl = 'api/mapjobsubmit/processes?baseUrl=' + encodeURIComponent(Workflows.baseUrl)
-    console.log('[MapJobSubmitTool] Fetching processes via proxy:', mmgisUrl(proxyUrl))
     return mmgisFetch(proxyUrl)
         .then((r) => r.json())
         .then((data) => {
-            console.log('[MapJobSubmitTool] /processes response:', data)
             if (!data || !Array.isArray(data.processes)) {
                 console.warn('[MapJobSubmitTool] /processes returned invalid shape:', data)
                 return []
             }
-            console.log('[MapJobSubmitTool] Fetched', data.processes.length, 'processes')
             return data.processes
         })
         .catch((err) => {
@@ -378,11 +364,9 @@ function fetchProcesses() {
 // Fetch details for a specific process including its input schema.
 function fetchProcessDetails(processID) {
     const proxyUrl = `api/mapjobsubmit/processes/${processID}?baseUrl=` + encodeURIComponent(Workflows.baseUrl)
-    console.log('[MapJobSubmitTool] Fetching process details via proxy:', mmgisUrl(proxyUrl))
     return mmgisFetch(proxyUrl)
         .then((r) => r.json())
         .then((data) => {
-            console.log('[MapJobSubmitTool] Process details response:', data)
             return data
         })
         .catch((err) => {
@@ -398,18 +382,15 @@ function fetchResources() {
 
     // Mode 1: No configuration - queues disabled
     if (!resourcesConfig || resourcesConfig.trim() === '') {
-        console.log('[MapJobSubmitTool] No resources configuration - queues disabled')
         return Promise.resolve(null)
     }
 
     // Mode 2: URL - fetch from API
     if (/^https?:\/\//i.test(resourcesConfig)) {
         const proxyUrl = 'api/mapjobsubmit/resources?resourcesUrl=' + encodeURIComponent(resourcesConfig)
-        console.log('[MapJobSubmitTool] Fetching resources from URL via proxy:', mmgisUrl(proxyUrl))
         return mmgisFetch(proxyUrl)
             .then((r) => r.json())
             .then((data) => {
-                console.log('[MapJobSubmitTool] Resources response:', data)
                 // API returns { code, message, queues: [...] }
                 // Extract the queues array
                 if (data && Array.isArray(data.queues)) {
@@ -425,7 +406,6 @@ function fetchResources() {
     }
 
     // Mode 3: Comma-separated list - parse as static array
-    console.log('[MapJobSubmitTool] Using static queue list from config')
     const queues = resourcesConfig.split(',')
         .map(q => q.trim())
         .filter(q => q.length > 0)
@@ -970,7 +950,6 @@ function buildFormFromInputs($parent, inputs, $queueSelect, $tagInput) {
 
                 // Only add if all values are present
                 if (!isNaN(minLon) && !isNaN(minLat) && !isNaN(maxLon) && !isNaN(maxLat)) {
-                    console.log(`[MapJobSubmitTool] Submitting bbox: ${minLon},${minLat},${maxLon},${maxLat}`)
 
                     // Order: [min_longitude, min_latitude, max_longitude, max_latitude]
                     // Format based on the input type from the algorithm
@@ -1569,7 +1548,6 @@ const MapInputDisplay = {
 
         // Draw all points
         points.forEach(point => {
-            console.log('[MapJobSubmitTool] Attempting to display point:', point)
             try {
                 const marker = L.circleMarker([point.lat, point.lon], {
                     radius: 8,
@@ -1588,7 +1566,6 @@ const MapInputDisplay = {
         // Draw all bounding boxes
         bboxes.forEach(bboxObj => {
             const bbox = bboxObj.bbox
-            console.log('[MapJobSubmitTool] Attempting to display bbox:', bboxObj)
             // Handle both string and array formats
             let parts
             if (Array.isArray(bbox)) {
@@ -1599,7 +1576,6 @@ const MapInputDisplay = {
 
             if (parts.length === 4 && parts.every(n => !isNaN(n))) {
                 const [west, south, east, north] = parts
-                console.log('[MapJobSubmitTool] Drawing bbox:', { west, south, east, north })
 
                 try {
                     // Create a single rectangle (Leaflet handles wrapping automatically)
@@ -1795,7 +1771,6 @@ const MapSelection = {
                 const west = Math.min(...lngs)   // Can be < -180
                 const east = Math.max(...lngs)   // Can be > 180
 
-                console.log('[MapJobSubmitTool] Raw bbox from draw:', { west, south, east, north })
 
                 // Display popup with raw coordinates
                 const span = east - west
@@ -2037,7 +2012,6 @@ const Workflows = {
 
                 // Store user ID and render authenticated state
                 Workflows.maapUserId = userId
-                console.log('[MapJobSubmitTool] Authenticated as MAAP user:', userId)
                 if (typeof Workflows._renderAuthenticated === 'function') {
                     Workflows._renderAuthenticated()
                 }
@@ -2060,7 +2034,6 @@ const Workflows = {
 
     submit: function (processID, payload, name) {
         const proxyUrl = `api/mapjobsubmit/processes/${processID}/execution?baseUrl=` + encodeURIComponent(Workflows.baseUrl)
-        console.log('[MapJobSubmitTool] Submitting job via proxy:', mmgisUrl(proxyUrl), 'with payload:', payload)
         return mmgisFetch(proxyUrl, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -2092,13 +2065,11 @@ const Workflows = {
                 return r.json()
             })
             .then((data) => {
-                console.log('[MapJobSubmitTool] Job submit response:', data)
                 const jobId = data.jobID
                 if (!jobId) {
                     console.error('[MapJobSubmitTool] No job ID in response:', data)
                     throw new Error('No job ID in response')
                 }
-                console.log('[MapJobSubmitTool] Job submitted with ID:', jobId)
                 Workflows.jobs[jobId] = {
                     endpoint: String(processID), // store processID as the endpoint identifier
                     payload: payload,
@@ -2112,12 +2083,9 @@ const Workflows = {
                 if (i !== -1) Workflows.jobIds.splice(i, 1)
                 Workflows.jobIds.unshift(jobId)
                 Workflows.page = 0
-                console.log('[MapJobSubmitTool] Recording job to DB:', jobId)
                 // Wait for DB write to complete before rendering to avoid race conditions
                 return recordSubmittedJob(jobId, String(processID), payload, name)
                     .then(() => {
-                        console.log('[MapJobSubmitTool] Job recorded to DB successfully')
-                        console.log('[MapJobSubmitTool] Rendering jobs list')
                         Workflows.ensurePolling()
                         Workflows.renderJobs()
                         return jobId
@@ -2142,11 +2110,8 @@ const Workflows = {
     },
 
     refreshFromServer: function () {
-        console.log('[MapJobSubmitTool] refreshFromServer called')
-
         // Check if authenticated before fetching jobs
         if (!Workflows.personalAccessToken) {
-            console.log('[MapJobSubmitTool] Not authenticated - skipping job refresh')
             return Promise.resolve()
         }
 
@@ -2157,8 +2122,6 @@ const Workflows = {
         // Fetch job history from MMGIS DB (not from MAAP API)
         return fetchSubmittedRegistry()
             .then((reg) => {
-                console.log('[MapJobSubmitTool] Fetched registry from DB:', Object.keys(reg).length, 'jobs')
-                console.log('[MapJobSubmitTool] Registry data:', reg)
                 // Merge registry data into Workflows.jobs
                 Object.keys(reg).forEach((jobId) => {
                     if (!Workflows.jobs[jobId]) {
@@ -2192,8 +2155,6 @@ const Workflows = {
                             (Workflows.jobs[a].startedAt || 0)
                     )
 
-                console.log('[MapJobSubmitTool] Built jobIds list:', Workflows.jobIds.length, 'jobs')
-                console.log('[MapJobSubmitTool] Job IDs:', Workflows.jobIds)
 
                 // Clamp the current page in case the new list is shorter
                 const maxPage = Math.max(
@@ -2202,7 +2163,6 @@ const Workflows = {
                 )
                 if (Workflows.page > maxPage) Workflows.page = maxPage
 
-                console.log('[MapJobSubmitTool] Rendering jobs (before fetch details)')
                 // Render immediately with what we have
                 Workflows.renderJobs()
 
@@ -2253,7 +2213,6 @@ const Workflows = {
     fetchPageDetails: function () {
         // Check if authenticated before fetching job details from MAAP API
         if (!Workflows.personalAccessToken) {
-            console.log('[MapJobSubmitTool] Not authenticated - skipping fetch page details')
             return Promise.resolve()
         }
 
@@ -2267,7 +2226,6 @@ const Workflows = {
                 // Skip polling jobs that are already in a terminal state
                 const job = Workflows.jobs[id]
                 if (job && isTerminal(job.status)) {
-                    console.log(`[MapJobSubmitTool] Skipping refresh for terminal job ${id} (status: ${job.status})`)
                     return Promise.resolve()
                 }
 
@@ -2300,7 +2258,6 @@ const Workflows = {
     pollAll: function () {
         // Check if authenticated before polling
         if (!Workflows.personalAccessToken) {
-            console.log('[MapJobSubmitTool] Not authenticated - stopping poll timer')
             if (Workflows.pollTimer) {
                 clearInterval(Workflows.pollTimer)
                 Workflows.pollTimer = null
@@ -2335,9 +2292,7 @@ const Workflows = {
 
     renderJobs: function () {
         const $list = $('#mapJobSubmitTool .mjs-jobs-list')
-        console.log('[MapJobSubmitTool] renderJobs: found list element:', $list.length > 0)
         if ($list.length === 0) {
-            console.warn('[MapJobSubmitTool] renderJobs: jobs list element not found!')
             return
         }
         $list.empty()
@@ -2806,7 +2761,6 @@ function interfaceWithMMGIS() {
     })
 
     $root.find('.mjs-refresh-btn').on('click', function () {
-        console.log('[MapJobSubmitTool] Refresh button clicked')
         const $btn = $(this)
         $btn.attr('disabled', true).text('Refreshing…')
         Workflows.refreshFromServer().finally(() => {
@@ -2840,8 +2794,6 @@ function interfaceWithMMGIS() {
                 // Extract inputs from the API response
                 // The API returns inputs as an array of objects with name, destination, and value
                 let payload = {}
-                console.log('[MapJobSubmitTool] Importing job with body:', body)
-                console.log('[MapJobSubmitTool] Raw inputs from API:', body.inputs)
 
                 if (Array.isArray(body.inputs)) {
                     // Convert array format to object format for storage
@@ -2850,13 +2802,11 @@ function interfaceWithMMGIS() {
                             payload[input.name] = input.value
                         }
                     })
-                    console.log('[MapJobSubmitTool] Converted inputs array to object:', payload)
                 } else if (body.inputs && typeof body.inputs === 'object') {
                     // Already in object format
                     payload = body.inputs
                 }
 
-                console.log('[MapJobSubmitTool] Final payload with', Object.keys(payload).length, 'inputs')
 
                 // Create job entry using processID from body
                 const status = readStatus(body) || 'unknown'
@@ -2878,7 +2828,6 @@ function interfaceWithMMGIS() {
                     body: body
                 }
 
-                console.log('[MapJobSubmitTool] Created job with name:', jobName, 'and payload:', payload)
 
                 // Add to ordered list at the top
                 const i = Workflows.jobIds.indexOf(trimmedJobId)
@@ -3247,7 +3196,6 @@ function interfaceWithMMGIS() {
         fetchResources().then((resources) => {
             // Mode 1: Queues disabled (resources is null)
             if (resources === null) {
-                console.log('[MapJobSubmitTool] Queues disabled - hiding queue field')
                 $queueSection.hide()
                 return
             }
@@ -3387,7 +3335,6 @@ function interfaceWithMMGIS() {
         $('.mjs-jobs').show()
 
         // Pull existing jobs for this MAAP user from the database
-        console.log('[MapJobSubmitTool] Loading jobs for MAAP user:', Workflows.maapUserId)
         Workflows.refreshFromServer()
     }
 
