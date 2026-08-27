@@ -21,11 +21,25 @@ const TERMINAL_STATUSES = ['failed', 'successful', 'dismissed', 'job-failed', 'c
 // Input name variations for map-based parameters
 const LAT_VARIATIONS = ['lat', 'latitude']
 const LON_VARIATIONS = ['lon', 'lng', 'longitude']
-const BBOX_VARIATIONS = ['bbox', 'boundingbox']
+const BBOX_VARIATIONS = ['bbox', 'boundingbox', 'bounding_box']
 
 // Normalize input key by removing spaces, hyphens, underscores and converting to lowercase
 function normalizeInputKey(key) {
     return String(key).toLowerCase().replace(/[-_\s]/g, '')
+}
+
+// Check if a parameter name contains bbox variations
+function containsBboxVariation(key) {
+    const normalized = normalizeInputKey(key)
+    return BBOX_VARIATIONS.some(variation => normalized.includes(variation))
+}
+
+// Check if a parameter name contains both lat and lon variations (for single lat/lon combo fields)
+function containsLatLonCombo(key) {
+    const normalized = normalizeInputKey(key)
+    const hasLat = LAT_VARIATIONS.some(variation => normalized.includes(variation))
+    const hasLon = LON_VARIATIONS.some(variation => normalized.includes(variation))
+    return hasLat && hasLon
 }
 
 // Check if an input should be treated as numeric based on its key or type
@@ -588,14 +602,18 @@ function readError(body) {
 
 // Check if an input name suggests it should have map selection
 function shouldShowMapSelect(key) {
-    const normalized = normalizeInputKey(key)
-
-    // Check for bbox variations
-    if (BBOX_VARIATIONS.includes(normalized)) {
+    // Check if contains bbox variation (e.g., "bbox", "my_bounding_box", "bbox_input")
+    if (containsBboxVariation(key)) {
         return true
     }
 
-    // Check for lat/lon variations
+    // Check if contains both lat and lon variations (e.g., "lat_lon", "latitude_longitude")
+    if (containsLatLonCombo(key)) {
+        return true
+    }
+
+    // Check for individual lat/lon variations (for separate fields)
+    const normalized = normalizeInputKey(key)
     if (LAT_VARIATIONS.includes(normalized) || LON_VARIATIONS.includes(normalized)) {
         return true
     }
@@ -605,14 +623,18 @@ function shouldShowMapSelect(key) {
 
 // Get the map selection type for a given input
 function getMapSelectType(key) {
-    const normalized = normalizeInputKey(key)
-
-    // Bounding box variations
-    if (BBOX_VARIATIONS.includes(normalized)) {
+    // Check if contains bbox variation (e.g., "bbox", "my_bounding_box", "bbox_input")
+    if (containsBboxVariation(key)) {
         return 'bbox'
     }
 
-    // Latitude/longitude variations
+    // Check if contains both lat and lon variations (e.g., "lat_lon", "latitude_longitude")
+    if (containsLatLonCombo(key)) {
+        return 'point'
+    }
+
+    // Check for individual lat/lon variations (for separate fields)
+    const normalized = normalizeInputKey(key)
     if (LAT_VARIATIONS.includes(normalized) || LON_VARIATIONS.includes(normalized)) {
         return 'point'
     }
@@ -657,8 +679,11 @@ function buildFormFromInputs($parent, inputs, $queueSelect, $tagInput) {
         // Determine input type
         const inputType = (input.type || '').toLowerCase()
 
-        // Check if this is a bbox field
-        const isBbox = BBOX_VARIATIONS.includes(normalizeInputKey(key))
+        // Check if this is a bbox field (contains any bbox variation)
+        const isBbox = containsBboxVariation(key)
+
+        // Check if this is a lat/lon combo field (single field containing both lat and lon)
+        const isLatLonCombo = containsLatLonCombo(key)
 
         // Label using the input name/key
         const typeLabel = inputType ? ` <span class="mjs-field-type">${escapeHTML(inputType)}</span>` : ''
@@ -842,12 +867,19 @@ function buildFormFromInputs($parent, inputs, $queueSelect, $tagInput) {
                 .attr('placeholder', input.placeholder || '')
                 .val(defaultValue)
 
-            // Check if this is a lat or lon field and we have a pair
+            // Check if this is a lat or lon field (for separate lat/lon pairs)
             const isLatOrLon = LAT_VARIATIONS.includes(normalizeInputKey(key)) ||
                                LON_VARIATIONS.includes(normalizeInputKey(key))
 
-            // Add map select button if applicable, but skip individual buttons for lat/lon if we have a pair
-            if (shouldShowMapSelect(key) && !(hasLatLonPair && isLatOrLon)) {
+            // Add map select button if applicable
+            // Show button for:
+            // 1. Lat/lon combo fields (single field with both lat and lon in name)
+            // 2. Individual lat/lon fields that are NOT part of a pair
+            // 3. Any other field that shouldShowMapSelect returns true for
+            const shouldShowButton = shouldShowMapSelect(key) &&
+                                    !(hasLatLonPair && isLatOrLon) // Skip individual buttons if we have a lat/lon pair
+
+            if (shouldShowButton) {
                 const $inputWrapper = $('<div class="mjs-input-with-btn"></div>')
                 $inputWrapper.append($input)
                 const $mapBtn = $('<button type="button" class="mjs-map-select-btn" data-input-key="' + escapeHTML(key) + '">Select on Map</button>')
@@ -1498,83 +1530,65 @@ const MapInputDisplay = {
         // Check if payload has an 'inputs' wrapper (new format with queue/tag/inputs)
         const inputsToUse = payload.inputs || payload
 
-        // Extract lat, lon, and bbox from payload
-        let lat = null
-        let lon = null
-        let bbox = null
+        // Collect all map inputs from payload
+        const points = [] // Array of {lat, lon, label}
+        const bboxes = [] // Array of {bbox, label}
+        let latValue = null
+        let lonValue = null
 
         Object.entries(inputsToUse).forEach(([key, value]) => {
-            const normalized = normalizeInputKey(key)
-            if (LAT_VARIATIONS.includes(normalized)) {
-                lat = parseFloat(value)
-            } else if (LON_VARIATIONS.includes(normalized)) {
-                lon = parseFloat(value)
-            } else if (BBOX_VARIATIONS.includes(normalized)) {
-                bbox = value
+            // Check for bbox (contains bbox variation anywhere in name)
+            if (containsBboxVariation(key)) {
+                bboxes.push({ bbox: value, label: key })
+            }
+            // Check for lat/lon combo (single field with both lat and lon)
+            else if (containsLatLonCombo(key)) {
+                // Parse "lat,lon" format
+                if (typeof value === 'string' && value.includes(',')) {
+                    const parts = value.split(',').map(s => parseFloat(s.trim()))
+                    if (parts.length >= 2 && !isNaN(parts[0]) && !isNaN(parts[1])) {
+                        points.push({ lat: parts[0], lon: parts[1], label: key })
+                    }
+                }
+            }
+            // Check for individual lat/lon fields (exact match)
+            else {
+                const normalized = normalizeInputKey(key)
+                if (LAT_VARIATIONS.includes(normalized)) {
+                    latValue = parseFloat(value)
+                } else if (LON_VARIATIONS.includes(normalized)) {
+                    lonValue = parseFloat(value)
+                }
             }
         })
 
-        // Draw point if we have lat and lon (check for null/undefined first!)
-        if (lat != null && lon != null && !isNaN(lat) && !isNaN(lon)) {
-            console.log('[MapJobSubmitTool] Attempting to display point:', { lat, lon })
+        // If we found individual lat and lon values, add them as a point
+        if (latValue != null && lonValue != null && !isNaN(latValue) && !isNaN(lonValue)) {
+            points.push({ lat: latValue, lon: lonValue, label: 'lat/lon' })
+        }
+
+        // Draw all points
+        points.forEach(point => {
+            console.log('[MapJobSubmitTool] Attempting to display point:', point)
             try {
-                const marker = L.circleMarker([lat, lon], {
+                const marker = L.circleMarker([point.lat, point.lon], {
                     radius: 8,
                     color: '#00A9E0',
                     fillColor: '#00A9E0',
                     fillOpacity: 0.6,
                     weight: 2
                 }).addTo(map)
-                marker.bindPopup(`Job Input<br>Lat: ${lat.toFixed(6)}<br>Lon: ${lon.toFixed(6)}`)
+                marker.bindPopup(`Job Input: ${escapeHTML(point.label)}<br>Lat: ${point.lat.toFixed(6)}<br>Lon: ${point.lon.toFixed(6)}`)
                 layers.push(marker)
             } catch (err) {
                 console.error('[MapJobSubmitTool] Failed to add point marker:', err)
-                window.alert(`Failed to display point on map.\n\nCoordinates: ${lat}, ${lon}\nError: ${err.message}`)
-                return
             }
-        } else if (lat != null && !isNaN(lat)) {
-            // Only lat - draw horizontal line across viewport
-            console.log('[MapJobSubmitTool] Attempting to display latitude line:', lat)
-            try {
-                const bounds = map.getBounds()
-                const west = bounds.getWest()
-                const east = bounds.getEast()
-                const line = L.polyline([[lat, west], [lat, east]], {
-                    color: '#00A9E0',
-                    weight: 2,
-                    dashArray: '5, 5'
-                }).addTo(map)
-                line.bindPopup(`Job Input<br>Latitude: ${lat.toFixed(6)}`)
-                layers.push(line)
-            } catch (err) {
-                console.error('[MapJobSubmitTool] Failed to add latitude line:', err)
-                window.alert('Failed to display latitude line on map.')
-                return
-            }
-        } else if (lon != null && !isNaN(lon)) {
-            // Only lon - draw vertical line across viewport
-            console.log('[MapJobSubmitTool] Attempting to display longitude line:', lon)
-            try {
-                const bounds = map.getBounds()
-                const south = bounds.getSouth()
-                const north = bounds.getNorth()
-                const line = L.polyline([[south, lon], [north, lon]], {
-                    color: '#00A9E0',
-                    weight: 2,
-                    dashArray: '5, 5'
-                }).addTo(map)
-                line.bindPopup(`Job Input<br>Longitude: ${lon.toFixed(6)}`)
-                layers.push(line)
-            } catch (err) {
-                console.error('[MapJobSubmitTool] Failed to add longitude line:', err)
-                window.alert('Failed to display longitude line on map.')
-                return
-            }
-        }
+        })
 
-        // Draw bounding box if we have it
-        if (bbox) {
-            console.log('[MapJobSubmitTool] Attempting to display bbox:', bbox)
+        // Draw all bounding boxes
+        bboxes.forEach(bboxObj => {
+            const bbox = bboxObj.bbox
+            console.log('[MapJobSubmitTool] Attempting to display bbox:', bboxObj)
             // Handle both string and array formats
             let parts
             if (Array.isArray(bbox)) {
@@ -1599,37 +1613,25 @@ const MapInputDisplay = {
                     // Check if this is a dateline-crossing bbox (west > east)
                     const crossesDateline = west > east
                     const popupText = crossesDateline
-                        ? `Job Input (crosses dateline)<br>Bounding Box:<br>W: ${west}, S: ${south}<br>E: ${east}, N: ${north}<br><small>Spans ${(360 - (west - east)).toFixed(1)}° longitude</small>`
-                        : `Job Input<br>Bounding Box:<br>W: ${west}, S: ${south}<br>E: ${east}, N: ${north}`
+                        ? `Job Input: ${escapeHTML(bboxObj.label)} (crosses dateline)<br>Bounding Box:<br>W: ${west}, S: ${south}<br>E: ${east}, N: ${north}<br><small>Spans ${(360 - (west - east)).toFixed(1)}° longitude</small>`
+                        : `Job Input: ${escapeHTML(bboxObj.label)}<br>Bounding Box:<br>W: ${west}, S: ${south}<br>E: ${east}, N: ${north}`
                     rect.bindPopup(popupText)
 
                     layers.push(rect)
-
-                    // Zoom to bbox
-                    map.fitBounds(rect.getBounds(), { padding: [50, 50] })
                 } catch (err) {
                     console.error('[MapJobSubmitTool] Failed to add bounding box:', err)
                     console.error('[MapJobSubmitTool] Error stack:', err.stack)
-                    window.alert(`Failed to display bounding box on map.\n\nBbox: ${bbox}\nError: ${err.message}`)
-                    return
                 }
             }
-        }
+        })
 
         // If we drew anything, store the layers and zoom to fit all
         if (layers.length > 0) {
             this.layers[jobId] = layers
 
-            // If we have multiple layers, create a group and zoom to all
-            if (layers.length > 1) {
-                const group = L.featureGroup(layers)
-                map.fitBounds(group.getBounds(), { padding: [50, 50] })
-            } else if (layers.length === 1 && !bbox) {
-                // For single point or line, just pan to it (don't zoom)
-                if (!isNaN(lat) && !isNaN(lon)) {
-                    map.panTo([lat, lon])
-                }
-            }
+            // Zoom to fit all layers
+            const group = L.featureGroup(layers)
+            map.fitBounds(group.getBounds(), { padding: [50, 50] })
         } else {
             window.alert('No valid map inputs found in this job.')
         }
@@ -1839,14 +1841,21 @@ const MapSelection = {
                 // Store the marker so it persists until job submission (one per button)
                 this.persistentLayers[this.inputKey] = marker
 
-                // Check if this is for lat or lon specifically
-                const keyLower = inputKey.toLowerCase().replace(/[-_\s]/g, '')
-                if (keyLower === 'lat' || keyLower === 'latitude') {
+                // Determine how to populate the input based on field type
+                const normalized = normalizeInputKey(inputKey)
+
+                // Check if this is a lat/lon combo field (contains both lat and lon)
+                if (containsLatLonCombo(inputKey)) {
+                    // Lat/lon combo field - set as "lat,lon"
+                    this.$targetInput.val(`${lat.toFixed(6)},${lon.toFixed(6)}`)
+                } else if (LAT_VARIATIONS.includes(normalized)) {
+                    // Individual latitude field
                     this.$targetInput.val(lat.toFixed(6))
-                } else if (keyLower === 'lon' || keyLower === 'lng' || keyLower === 'longitude') {
+                } else if (LON_VARIATIONS.includes(normalized)) {
+                    // Individual longitude field
                     this.$targetInput.val(lon.toFixed(6))
                 } else {
-                    // Generic point - set as "lat,lon"
+                    // Fallback: generic point - set as "lat,lon"
                     this.$targetInput.val(`${lat.toFixed(6)},${lon.toFixed(6)}`)
                 }
                 this.cancel()
