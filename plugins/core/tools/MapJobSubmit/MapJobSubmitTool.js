@@ -426,18 +426,31 @@ const MapInputDisplay = {
         if (layers.length > 0) {
             this.layers[jobId] = layers
 
-            // Zoom to fit all layers. A single point (no bbox) produces a
-            // zero-size bounds, cap the zoom
-            // so we don't overshoot past available data.
+            // The map container's cached size can be stale if it was
+            // resized/hidden by tool-panel layout changes since the last
+            // render (see Map_.centerAt for the same pattern) - without
+            // this, fitBounds/setView compute zoom and centering against
+            // the wrong dimensions.
+            map.invalidateSize()
+
             const group = L.featureGroup(layers)
-            const maxSensibleZoom = Math.min(
-                map.getZoom() + 6,
-                map.getMaxZoom ? map.getMaxZoom() : 18
-            )
-            map.fitBounds(group.getBounds(), {
-                padding: [50, 50],
-                maxZoom: maxSensibleZoom
-            })
+            const bounds = group.getBounds()
+
+            if (points.length === 1 && bboxes.length === 0) {
+                // A single point has zero-size bounds. fitBounds on a
+                // degenerate bounds zooms all the way to the map's max
+                // zoom and can behave oddly with centering; explicitly
+                // center on the point instead at a reasonable fixed zoom.
+                const p = points[0]
+                const targetZoom = Math.min(
+                    12,
+                    map.getMaxZoom ? map.getMaxZoom() : 18
+                )
+                map.setView([p.lat, p.lon], targetZoom)
+            } else {
+                // Multiple features and/or bboxes: fit them all in frame.
+                map.fitBounds(bounds, { padding: [50, 50] })
+            }
         } else {
             window.alert('No valid map inputs found in this job.')
         }
