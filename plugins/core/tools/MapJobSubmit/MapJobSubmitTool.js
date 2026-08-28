@@ -4,6 +4,12 @@ import L_ from '@basics/Layers_/Layers_'
 import Map_ from '@basics/Map_/Map_'
 import ToolController_ from '@basics/ToolController_/ToolController_'
 
+// Import utility modules with wildcard syntax
+import * as Utils from './utils.js'
+import * as API from './api.js'
+import * as LayerManager from './layerManager.js'
+import * as UI from './ui.js'
+
 // mmgisAPI is intentionally accessed via window.mmgisAPI at call time rather
 // than imported at module top. Importing it here creates a cycle through
 // src/pre/tools.js → MapJobSubmitTool → mmgisAPI → LayerUtils that fails with
@@ -15,402 +21,115 @@ const SUBMITTED_STORAGE_KEY = 'mmgis.workflows.submitted'
 const SUBMITTED_MAX_ENTRIES = 100
 const PAGE_SIZE = 10
 
-// Terminal/completed job statuses - jobs with these statuses won't be refreshed
-const TERMINAL_STATUSES = ['failed', 'successful', 'dismissed', 'job-failed', 'completed', 'cancelled']
-
-// Input name variations for map-based parameters
-const LAT_VARIATIONS = ['lat', 'latitude']
-const LON_VARIATIONS = ['lon', 'lng', 'longitude']
-const BBOX_VARIATIONS = ['bbox', 'boundingbox', 'bounding_box']
-
-// Normalize input key by removing spaces, hyphens, underscores and converting to lowercase
-function normalizeInputKey(key) {
-    return String(key).toLowerCase().replace(/[-_\s]/g, '')
-}
-
-// Check if a parameter name contains bbox variations
-function containsBboxVariation(key) {
-    const normalized = normalizeInputKey(key)
-    return BBOX_VARIATIONS.some(variation => normalized.includes(variation))
-}
-
-// Check if a parameter name contains both lat and lon variations (for single lat/lon combo fields)
-function containsLatLonCombo(key) {
-    const normalized = normalizeInputKey(key)
-    const hasLat = LAT_VARIATIONS.some(variation => normalized.includes(variation))
-    const hasLon = LON_VARIATIONS.some(variation => normalized.includes(variation))
-    return hasLat && hasLon
-}
-
-// Check if an input should be treated as numeric based on its key or type
-function shouldBeNumeric(key, type) {
-    if (!type) type = ''
-    const typeLower = type.toLowerCase()
-
-    // Explicit numeric types
-    if (typeLower === 'number' || typeLower === 'integer' ||
-        typeLower === 'float' || typeLower === 'double') {
-        return true
-    }
-
-    // Lat/lon are always numeric
-    const normalized = normalizeInputKey(key)
-    if (LAT_VARIATIONS.includes(normalized) || LON_VARIATIONS.includes(normalized)) {
-        return true
-    }
-
-    return false
-}
-
-// Per-user job history is stored server-side in the MMGIS DB
-// (workflow_submissions table). All three helpers below talk to that API.
-// Network failures are intentionally swallowed — the UI degrades gracefully
-// rather than blocking submit on a transient MMGIS-side error.
-
-function mmgisUrl(path) {
-    const root =
-        (window.mmgisglobal && window.mmgisglobal.ROOT_PATH) || ''
-    return (root ? root + '/' : '') + path.replace(/^\//, '')
-}
+// Local aliases to the extracted helper modules — kept so the bulk of this
+// file (written before the utils.js/api.js/layerManager.js split) doesn't
+// need every call site rewritten. Definitions live in the imported modules;
+// no logic is duplicated here.
+const { LAT_VARIATIONS, LON_VARIATIONS, BBOX_VARIATIONS, TERMINAL_STATUSES } =
+    Utils
+const normalizeInputKey = Utils.normalizeInputKey
+const containsBboxVariation = Utils.containsBboxVariation
+const containsLatLonCombo = Utils.containsLatLonCombo
+const shouldBeNumeric = Utils.shouldBeNumeric
+const escapeHTML = Utils.escapeHTML
+const sanitizeInput = Utils.sanitizeInput
+const sanitizeToken = Utils.sanitizeToken
+const normalizeStatus = Utils.normalizeStatus
+const isTerminal = Utils.isTerminal
+const isFilePathValue = Utils.isFilePathValue
+const isStacItemUrl = Utils.isStacItemUrl
+const urlsFromString = Utils.urlsFromString
+const parseStacItemUrl = Utils.parseStacItemUrl
 
 function mmgisFetch(path, init) {
-    const headers = {
-        Accept: 'application/json',
-        ...((init && init.headers) || {}),
-    }
-
-    // Add x-proxy-ticket header if token is available (X- prefix is required for custom headers)
-    if (Workflows.personalAccessToken) {
-        headers['x-proxy-ticket'] = Workflows.personalAccessToken
-    } 
-
-    return fetch(mmgisUrl(path), {
-        credentials: 'same-origin',
-        ...init,
-        headers: headers,  
-    })
+    return API.mmgisFetch(path, init, Workflows.personalAccessToken)
 }
-
-// Returns { [workflow_id]: { endpoint, payload, name, ts } }
+function verifyToken() {
+    return API.verifyToken(Workflows.baseUrl, Workflows.personalAccessToken)
+}
+function fetchMaapUserId() {
+    return API.fetchMaapUserId(
+        Workflows.memberInfoUrl,
+        Workflows.personalAccessToken
+    )
+}
+function fetchProcesses() {
+    return API.fetchProcesses(Workflows.baseUrl)
+}
+function fetchProcessDetails(processID) {
+    return API.fetchProcessDetails(processID, Workflows.baseUrl)
+}
+function fetchResources() {
+    return API.fetchResources(
+        Workflows.resourcesConfig,
+        Workflows.personalAccessToken
+    )
+}
+function pollJob(jobId, getJobDetails) {
+    return API.pollJob(
+        jobId,
+        Workflows.baseUrl,
+        Workflows.personalAccessToken,
+        getJobDetails
+    )
+}
 function fetchSubmittedRegistry() {
-    // Include maap_user_id query param to filter by MAAP user
-    const url = Workflows.maapUserId
-        ? `api/mapjobsubmit-history?maap_user_id=${encodeURIComponent(Workflows.maapUserId)}`
-        : 'api/mapjobsubmit-history'
-    return mmgisFetch(url)
-        .then((r) => {
-            return r.json()
-        })
-        .then((d) => {
-            if (!d || d.status !== 'success' || !Array.isArray(d.body)) {
-                console.warn('[MapJobSubmitTool] Invalid registry response format:', d)
-                return {}
-            }
-            const out = {}
-            d.body.forEach((row) => {
-                if (!row || !row.workflow_id) return
-                out[row.workflow_id] = {
-                    endpoint: row.endpoint || '',
-                    payload: row.payload || null,
-                    name: row.name || '',
-                    ts: row.created_on
-                        ? new Date(row.created_on).getTime()
-                        : Date.now(),
-                }
-            })
-            return out
-        })
-        .catch((err) => {
-            console.error('[MapJobSubmitTool] Failed to fetch registry:', err)
-            return {}
-        })
+    return API.fetchSubmittedRegistry(
+        Workflows.maapUserId,
+        Workflows.personalAccessToken
+    )
 }
-
 function recordSubmittedJob(jobId, endpoint, payload, name) {
-    return mmgisFetch('api/mapjobsubmit-history', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            workflow_id: jobId,
-            maap_user_id: Workflows.maapUserId || null,
-            endpoint,
-            payload,
-            name: name || '',
-        }),
-    })
-        .then((r) => r.json())
-        .then((data) => {
-            if (data && data.status === 'success') {
-                return data
-            }
-            throw new Error('Failed to record job')
-        })
+    return API.recordSubmittedJob(
+        jobId,
+        endpoint,
+        payload,
+        name,
+        Workflows.maapUserId,
+        Workflows.personalAccessToken
+    )
 }
-
-function updateJobName(jobId, name) {
-    // Goes through the upsert route (not /rename) so naming a job this user
-    // never submitted creates its history row instead of silently updating
-    // zero rows.
-    return mmgisFetch('api/mapjobsubmit-history', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ workflow_id: jobId, name: name || '' }),
-    }).catch(() => {})
-}
-
 function deleteJobFromDatabase(jobId) {
-    return mmgisFetch(`api/mapjobsubmit-history/${encodeURIComponent(jobId)}`, {
-        method: 'DELETE',
-    })
-        .then((r) => r.json())
-        .then((data) => {
-            if (data && data.status === 'success') {
-                return data
-            }
-            throw new Error(data.message || 'Failed to delete job')
-        })
-        .catch((err) => {
-            console.error('[MapJobSubmitTool] Failed to delete job from DB:', err)
-            throw err
-        })
+    return API.deleteJobFromDatabase(jobId, Workflows.personalAccessToken)
 }
 
-// One-time migration from the old localStorage registry into the new
-// DB-backed store. After successful upload, the localStorage key is cleared
-// so we don't re-migrate every load. If MMGIS is unreachable, the legacy
-// data is left in place to retry on the next open.
-function migrateLegacyLocalStorageRegistry() {
-    let raw
-    try {
-        raw = window.localStorage.getItem(SUBMITTED_STORAGE_KEY)
-    } catch (e) {
-        return Promise.resolve()
-    }
-    if (!raw) return Promise.resolve()
-    let parsed
-    try {
-        parsed = JSON.parse(raw)
-    } catch (e) {
-        try {
-            window.localStorage.removeItem(SUBMITTED_STORAGE_KEY)
-        } catch (e2) {}
-        return Promise.resolve()
-    }
-    if (!parsed || typeof parsed !== 'object') return Promise.resolve()
-    const entries = Object.entries(parsed)
-    if (entries.length === 0) {
-        try {
-            window.localStorage.removeItem(SUBMITTED_STORAGE_KEY)
-        } catch (e) {}
-        return Promise.resolve()
-    }
-    return Promise.all(
-        entries.map(([jobId, data]) =>
-            recordSubmittedJob(
-                jobId,
-                data.endpoint,
-                data.payload,
-                data.name || ''
-            )
-        )
-    ).then(() => {
-        try {
-            window.localStorage.removeItem(SUBMITTED_STORAGE_KEY)
-        } catch (e) {}
-    })
+function ensureWorkflowsGroup() {
+    return LayerManager.ensureWorkflowsGroup(L_)
+}
+function buildLayerObjForJob(jobId, uri, job) {
+    return LayerManager.buildLayerObjForJob(jobId, uri, job)
+}
+function removeLayerForJob(jobId, job) {
+    return LayerManager.removeLayerForJob(
+        jobId,
+        job,
+        L_,
+        ToolController_,
+        Workflows.renderJobs
+    )
+}
+function addLayerForJob(jobId, job) {
+    return LayerManager.addLayerForJob(
+        jobId,
+        job,
+        L_,
+        ToolController_,
+        Workflows.renderJobs
+    )
+}
+function syncLayerName(jobId) {
+    return LayerManager.syncLayerName(
+        jobId,
+        Workflows.jobs[jobId] || {},
+        L_,
+        ToolController_
+    )
 }
 
 // Algorithms fetched from the workflows API (baseUrl + '/processes')
 // Shape: { processes: [{ id, title, description, version, deployedBy, processID, ... }] }
 // This global gets populated asynchronously via fetchProcesses() when the tool opens.
 let PROCESSES = []
-
-/**
- * Escapes HTML special characters to prevent XSS attacks.
- * Standard pattern used across MMGIS (WorkflowsTool, Config routes, etc.)
- */
-function escapeHTML(s) {
-    return String(s == null ? '' : s)
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#39;')
-}
-
-/**
- * Sanitizes user input by removing dangerous characters.
- * Based on F_.sanitize() and backend sanitizeInput() patterns.
- */
-function sanitizeInput(str) {
-    if (str == null) return ''
-    // Remove potentially dangerous characters: < > ; { }
-    // These could be used for XSS/injection attacks
-    return String(str).replace(/[<>;{}]/g, '')
-}
-
-/**
- * Validates and sanitizes a personal access token.
- * Ensures tokens don't contain XSS/injection characters.
- */
-function sanitizeToken(token) {
-    if (!token || typeof token !== 'string') return null
-
-    const trimmed = token.trim()
-    if (trimmed.length === 0) return null
-
-    // Check for dangerous characters that could indicate XSS attempt
-    const dangerousChars = /[<>'"`;(){}[\]\\]/
-    if (dangerousChars.test(trimmed)) {
-        console.warn('[MapJobSubmitTool] Token contains potentially dangerous characters')
-        return null
-    }
-
-    // Reasonable length limit (most tokens are 20-200 chars, allow up to 500)
-    if (trimmed.length > 500) {
-        console.warn('[MapJobSubmitTool] Token exceeds maximum length')
-        return null
-    }
-
-    return trimmed
-}
-
-function normalizeStatus(s) {
-    if (!s || typeof s !== 'string') return ''
-    return s.toLowerCase()
-}
-
-function isTerminal(status) {
-    const s = normalizeStatus(status)
-    return TERMINAL_STATUSES.includes(s)
-}
-
-// Verify the personal access token by calling the /jobs endpoint.
-// Returns true if valid, false if invalid (403 or other error).
-function verifyToken() {
-    const proxyUrl = 'api/mapjobsubmit/jobs?baseUrl=' + encodeURIComponent(Workflows.baseUrl)
-    return mmgisFetch(proxyUrl)
-        .then((r) => {
-            if (r.status === 403) {
-                console.warn('[MapJobSubmitTool] Token verification failed: 403 Forbidden')
-                return false
-            }
-            if (!r.ok) {
-                console.warn('[MapJobSubmitTool] Token verification failed:', r.status)
-                return false
-            }
-            return r.json()
-        })
-        .then((data) => {
-            if (data === false) return false // 403 or error
-            return true
-        })
-        .catch((err) => {
-            console.warn('[MapJobSubmitTool] verifyToken failed', err)
-            return false
-        })
-}
-
-// Fetch the MAAP user ID from the configured member info endpoint
-// Returns the user ID if successful, null if failed
-function fetchMaapUserId() {
-    // Use the full URL from tool vars (required to be a full URL)
-    const memberInfoUrl = Workflows.memberInfoUrl
-    if (!memberInfoUrl) {
-        console.error('[MapJobSubmitTool] memberInfoUrl not configured')
-        return Promise.resolve(null)
-    }
-    const proxyUrl = 'api/mapjobsubmit/members/self?memberInfoUrl=' + encodeURIComponent(memberInfoUrl)
-    return mmgisFetch(proxyUrl)
-        .then((r) => {
-            if (!r.ok) {
-                console.warn('[MapJobSubmitTool] Failed to fetch user ID:', r.status)
-                return null
-            }
-            return r.json()
-        })
-        .then((data) => {
-            if (!data || !data.id) {
-                console.warn('[MapJobSubmitTool] No user ID in response:', data)
-                return null
-            }
-            return data.id
-        })
-        .catch((err) => {
-            console.warn('[MapJobSubmitTool] fetchMaapUserId failed', err)
-            return null
-        })
-}
-
-// Fetch the list of available algorithms/processes from the workflows API.
-// Uses MMGIS backend proxy to avoid CORS issues.
-function fetchProcesses() {
-    const proxyUrl = 'api/mapjobsubmit/processes?baseUrl=' + encodeURIComponent(Workflows.baseUrl)
-    return mmgisFetch(proxyUrl)
-        .then((r) => r.json())
-        .then((data) => {
-            if (!data || !Array.isArray(data.processes)) {
-                console.warn('[MapJobSubmitTool] /processes returned invalid shape:', data)
-                return []
-            }
-            return data.processes
-        })
-        .catch((err) => {
-            console.warn('[MapJobSubmitTool] fetchProcesses failed', err)
-            return []
-        })
-}
-
-// Fetch details for a specific process including its input schema.
-function fetchProcessDetails(processID) {
-    const proxyUrl = `api/mapjobsubmit/processes/${processID}?baseUrl=` + encodeURIComponent(Workflows.baseUrl)
-    return mmgisFetch(proxyUrl)
-        .then((r) => r.json())
-        .then((data) => {
-            return data
-        })
-        .catch((err) => {
-            console.warn('[MapJobSubmitTool] fetchProcessDetails failed', err)
-            return null
-        })
-}
-
-// Fetch or parse available algorithm resources/queues based on configuration.
-// Returns a promise that resolves to an array of queue names, or null if queues are disabled.
-function fetchResources() {
-    const resourcesConfig = Workflows.vars.resourcesConfig || ''
-
-    // Mode 1: No configuration - queues disabled
-    if (!resourcesConfig || resourcesConfig.trim() === '') {
-        return Promise.resolve(null)
-    }
-
-    // Mode 2: URL - fetch from API
-    if (/^https?:\/\//i.test(resourcesConfig)) {
-        const proxyUrl = 'api/mapjobsubmit/resources?resourcesUrl=' + encodeURIComponent(resourcesConfig)
-        return mmgisFetch(proxyUrl)
-            .then((r) => r.json())
-            .then((data) => {
-                // API returns { code, message, queues: [...] }
-                // Extract the queues array
-                if (data && Array.isArray(data.queues)) {
-                    return data.queues
-                }
-                console.warn('[MapJobSubmitTool] No queues array in response:', data)
-                return []
-            })
-            .catch((err) => {
-                console.warn('[MapJobSubmitTool] fetchResources failed', err)
-                return []
-            })
-    }
-
-    // Mode 3: Comma-separated list - parse as static array
-    const queues = resourcesConfig.split(',')
-        .map(q => q.trim())
-        .filter(q => q.length > 0)
-    return Promise.resolve(queues)
-}
 
 // Human-friendly label for a job's endpoint/processID. If we recognize the
 // processID in our fetched PROCESSES list, return its title; otherwise prettify.
@@ -431,43 +150,15 @@ function endpointLabel(endpoint) {
         .replace(/\b\w/g, (c) => c.toUpperCase())
 }
 
-// TEMPORARY: see comment on the ENDPOINTS const above.
-function isFilePathValue(v) {
-    return typeof v === 'string' && v.startsWith('file://')
-}
-
 // Pull a status from the API response. Handles multiple formats:
 // - MAAP API: { status: "failed" }
 // - Legacy formats: { workflow_status: "...", job_status: "..." }
 // Always returned lowercase to keep CSS classes consistent.
 function readStatus(body) {
     if (!body) return ''
-    return normalizeStatus(
+    return Utils.normalizeStatus(
         body.status || body.workflow_status || body.job_status || ''
     )
-}
-
-// Detect a STAC item URL — anything with /stac/... and /items/<id> in the
-// path. Workflow responses put these in prod_description, sometimes
-// comma-separated with duplicates.
-function isStacItemUrl(u) {
-    return (
-        typeof u === 'string' &&
-        /^https?:\/\//i.test(u) &&
-        /\/stac\//i.test(u) &&
-        /\/items\//i.test(u)
-    )
-}
-
-// Extract URLs (http/https) from a free-form description field. The workflow
-// API concatenates multiple entries with commas.
-function urlsFromString(s) {
-    if (typeof s !== 'string' || !s) return []
-    const out = []
-    const re = /https?:\/\/[^\s,]+/gi
-    let m
-    while ((m = re.exec(s))) out.push(m[0])
-    return out
 }
 
 // Collect every output URI we can find on a workflow body. Walks:
@@ -582,897 +273,36 @@ function readError(body) {
 
 // Check if an input name suggests it should have map selection
 function shouldShowMapSelect(key) {
-    // Check if contains bbox variation (e.g., "bbox", "my_bounding_box", "bbox_input")
-    if (containsBboxVariation(key)) {
-        return true
-    }
-
-    // Check if contains both lat and lon variations (e.g., "lat_lon", "latitude_longitude")
-    if (containsLatLonCombo(key)) {
-        return true
-    }
-
-    // Check for individual lat/lon variations (for separate fields)
-    const normalized = normalizeInputKey(key)
-    if (LAT_VARIATIONS.includes(normalized) || LON_VARIATIONS.includes(normalized)) {
-        return true
-    }
-
-    return false
+    if (Utils.containsBboxVariation(key)) return true
+    if (Utils.containsLatLonCombo(key)) return true
+    const normalized = Utils.normalizeInputKey(key)
+    return (
+        Utils.LAT_VARIATIONS.includes(normalized) ||
+        Utils.LON_VARIATIONS.includes(normalized)
+    )
 }
 
 // Get the map selection type for a given input
 function getMapSelectType(key) {
-    // Check if contains bbox variation (e.g., "bbox", "my_bounding_box", "bbox_input")
-    if (containsBboxVariation(key)) {
-        return 'bbox'
-    }
-
-    // Check if contains both lat and lon variations (e.g., "lat_lon", "latitude_longitude")
-    if (containsLatLonCombo(key)) {
+    if (Utils.containsBboxVariation(key)) return 'bbox'
+    if (Utils.containsLatLonCombo(key)) return 'point'
+    const normalized = Utils.normalizeInputKey(key)
+    if (
+        Utils.LAT_VARIATIONS.includes(normalized) ||
+        Utils.LON_VARIATIONS.includes(normalized)
+    )
         return 'point'
-    }
-
-    // Check for individual lat/lon variations (for separate fields)
-    const normalized = normalizeInputKey(key)
-    if (LAT_VARIATIONS.includes(normalized) || LON_VARIATIONS.includes(normalized)) {
-        return 'point'
-    }
-
     return null
 }
 
-// Build a form from the API's input schema (inputs object from process details).
-// Returns a function that collects the payload.
-function buildFormFromInputs($parent, inputs, $queueSelect, $tagInput) {
-    $parent.empty()
-    if (!inputs || Object.keys(inputs).length === 0) {
-        $parent.append('<div class="mjs-empty">No parameters required.</div>')
-        return () => ({
-            queue: ($queueSelect && $queueSelect.val()) || '',
-            tag: ($tagInput && $tagInput.val().trim()) || '',
-            inputs: {}
-        })
-    }
-
-    const inputRefs = []
-
-    // First pass: detect if we have both lat and lon fields
-    let latKey = null
-    let lonKey = null
-    Object.keys(inputs).forEach((key) => {
-        const normalized = normalizeInputKey(key)
-        if (LAT_VARIATIONS.includes(normalized)) {
-            latKey = key
-        } else if (LON_VARIATIONS.includes(normalized)) {
-            lonKey = key
-        }
-    })
-
-    const hasLatLonPair = latKey && lonKey
-    let lastLatLonField = null // Track the last lat or lon field to insert button after
-
-    Object.entries(inputs).forEach(([key, input]) => {
-        const id = `mjs-input-${key.replace(/[^A-Za-z0-9_-]/g, '_')}`
-        const $field = $('<div class="mjs-field"></div>')
-
-        // Determine input type
-        const inputType = (input.type || '').toLowerCase()
-
-        // Check if this is a bbox field (contains any bbox variation)
-        const isBbox = containsBboxVariation(key)
-
-        // Check if this is a lat/lon combo field (single field containing both lat and lon)
-        const isLatLonCombo = containsLatLonCombo(key)
-
-        // Label using the input name/key
-        const typeLabel = inputType ? ` <span class="mjs-field-type">${escapeHTML(inputType)}</span>` : ''
-        $field.append(
-            `<div class="mjs-field-label"><label for="${id}">${escapeHTML(key)}</label>${typeLabel}</div>`
-        )
-
-        let $input
-        if (isBbox) {
-            // Special handling for bbox: 4 coordinate fields + format selector
-            // Validate that type is string, array, or text
-            if (inputType !== 'string' && inputType !== 'array' && inputType !== 'text') {
-                $field.append(
-                    '<div class="mjs-bbox-error">⚠ bbox must be string, array, or text type</div>'
-                )
-                $parent.append($field)
-                return
-            }
-
-            // Create 4 input fields for bbox coordinates
-            const $bboxGrid = $('<div class="mjs-bbox-grid"></div>')
-
-            const $minLon = $('<input type="number" step="any" placeholder="Min Lon" class="mjs-bbox-input" data-bbox-field="min_lon" />')
-            const $minLat = $('<input type="number" step="any" placeholder="Min Lat" class="mjs-bbox-input" data-bbox-field="min_lat" />')
-            const $maxLon = $('<input type="number" step="any" placeholder="Max Lon" class="mjs-bbox-input" data-bbox-field="max_lon" />')
-            const $maxLat = $('<input type="number" step="any" placeholder="Max Lat" class="mjs-bbox-input" data-bbox-field="max_lat" />')
-
-            $bboxGrid.append(
-                $('<div class="mjs-bbox-field"><label>Min Lon</label></div>').append($minLon)
-            )
-            $bboxGrid.append(
-                $('<div class="mjs-bbox-field"><label>Min Lat</label></div>').append($minLat)
-            )
-            $bboxGrid.append(
-                $('<div class="mjs-bbox-field"><label>Max Lon</label></div>').append($maxLon)
-            )
-            $bboxGrid.append(
-                $('<div class="mjs-bbox-field"><label>Max Lat</label></div>').append($maxLat)
-            )
-
-            $field.append($bboxGrid)
-
-            // Add "Submit as" text input showing the raw formatted values
-            const $formatLabel = $('<div class="mjs-bbox-format-label">Submit as</div>')
-            const $formatInput = $('<input type="text" class="mjs-bbox-format-input" readonly />')
-
-            // Set initial placeholder text
-            let placeholderText = ''
-            if (inputType === 'array') {
-                placeholderText = '[min_longitude, min_latitude, max_longitude, max_latitude]'
-            } else {
-                // string or text type
-                placeholderText = 'min_longitude,min_latitude,max_longitude,max_latitude'
-            }
-            $formatInput.val(placeholderText)
-
-            // Function to update the "Submit as" field with raw values
-            const updateFormatDisplay = () => {
-                const minLon = $minLon.val()
-                const minLat = $minLat.val()
-                const maxLon = $maxLon.val()
-                const maxLat = $maxLat.val()
-
-                if (minLon && minLat && maxLon && maxLat) {
-                    let formatted = ''
-                    if (inputType === 'array') {
-                        formatted = `[${minLon}, ${minLat}, ${maxLon}, ${maxLat}]`
-                    } else {
-                        // string or text type
-                        formatted = `${minLon},${minLat},${maxLon},${maxLat}`
-                    }
-                    $formatInput.val(formatted)
-                } else {
-                    // Show placeholder text when fields are empty
-                    $formatInput.val(placeholderText)
-                }
-            }
-
-            // Function to update the bbox rectangle on the map
-            const updateBboxOnMap = () => {
-                const minLon = parseFloat($minLon.val())
-                const minLat = parseFloat($minLat.val())
-                const maxLon = parseFloat($maxLon.val())
-                const maxLat = parseFloat($maxLat.val())
-
-                if (!isNaN(minLon) && !isNaN(minLat) && !isNaN(maxLon) && !isNaN(maxLat)) {
-                    if (Map_ && Map_.map) {
-                        const map = Map_.map
-                        const L = window.L
-
-                        // Remove existing rectangle if present
-                        if (MapSelection.persistentLayers[key]) {
-                            try {
-                                map.removeLayer(MapSelection.persistentLayers[key])
-                            } catch (err) {
-                                console.warn('[MapJobSubmitTool] Failed to remove bbox layer:', err)
-                            }
-                        }
-
-                        // Create a single rectangle (Leaflet handles wrapping automatically)
-                        // Note: For dateline-crossing bboxes where minLon > maxLon,
-                        // the rectangle will wrap around the world as intended
-                        const rect = L.rectangle([[minLat, minLon], [maxLat, maxLon]], {
-                            color: '#ff8800',
-                            weight: 2,
-                            fillOpacity: 0.2
-                        }).addTo(map)
-
-                        const crossesDateline = minLon > maxLon
-                        const popupText = crossesDateline
-                            ? `Selected Bbox (crosses dateline)<br>W: ${minLon.toFixed(6)}<br>S: ${minLat.toFixed(6)}<br>E: ${maxLon.toFixed(6)}<br>N: ${maxLat.toFixed(6)}<br><small>Spans ${(360 - (minLon - maxLon)).toFixed(1)}° longitude</small>`
-                            : `Selected Bbox<br>W: ${minLon.toFixed(6)}<br>S: ${minLat.toFixed(6)}<br>E: ${maxLon.toFixed(6)}<br>N: ${maxLat.toFixed(6)}`
-                        rect.bindPopup(popupText)
-
-                        // Store the rectangle
-                        MapSelection.persistentLayers[key] = rect
-                    }
-                }
-            }
-
-            // Update the format display and map whenever any bbox field changes
-            $minLon.on('input', () => {
-                updateFormatDisplay()
-                updateBboxOnMap()
-            })
-            $minLat.on('input', () => {
-                updateFormatDisplay()
-                updateBboxOnMap()
-            })
-            $maxLon.on('input', () => {
-                updateFormatDisplay()
-                updateBboxOnMap()
-            })
-            $maxLat.on('input', () => {
-                updateFormatDisplay()
-                updateBboxOnMap()
-            })
-
-            $field.append($formatLabel)
-            $field.append($formatInput)
-
-            // Add "Select on Map" button
-            const $mapBtn = $('<button type="button" class="mjs-map-select-btn mjs-bbox-map-btn" data-input-key="' + escapeHTML(key) + '">Select on Map</button>')
-            $field.append($mapBtn)
-
-            // Store reference to all bbox components
-            inputRefs.push({
-                key,
-                type: inputType,
-                isBbox: true,
-                $minLon,
-                $minLat,
-                $maxLon,
-                $maxLat,
-                $formatInput
-            })
-        } else if (inputType === 'boolean') {
-            // Boolean toggle switch
-            const defaultValue = input.default != null ? input.default : false
-            const checked = defaultValue === true || defaultValue === 'true'
-
-            const $toggleWrapper = $('<div class="mjs-toggle-wrapper"></div>')
-            $input = $('<input type="checkbox" class="mjs-toggle-input" />')
-                .attr('id', id)
-                .prop('checked', checked)
-            const $slider = $('<span class="mjs-toggle-slider"></span>')
-
-            // Make the slider clickable
-            $slider.on('click', function() {
-                $input.prop('checked', !$input.prop('checked'))
-            })
-
-            $toggleWrapper.append($input).append($slider)
-            $field.append($toggleWrapper)
-            inputRefs.push({ key, $input, type: inputType })
-        } else {
-            // Text input for all other types
-            const defaultValue = input.default != null ? String(input.default) : ''
-            $input = $('<input type="text" />')
-                .attr('id', id)
-                .attr('placeholder', input.placeholder || '')
-                .val(defaultValue)
-
-            // Check if this is a lat or lon field (for separate lat/lon pairs)
-            const isLatOrLon = LAT_VARIATIONS.includes(normalizeInputKey(key)) ||
-                               LON_VARIATIONS.includes(normalizeInputKey(key))
-
-            // Add map select button if applicable
-            // Show button for:
-            // 1. Lat/lon combo fields (single field with both lat and lon in name)
-            // 2. Individual lat/lon fields that are NOT part of a pair
-            // 3. Any other field that shouldShowMapSelect returns true for
-            const shouldShowButton = shouldShowMapSelect(key) &&
-                                    !(hasLatLonPair && isLatOrLon) // Skip individual buttons if we have a lat/lon pair
-
-            if (shouldShowButton) {
-                const $inputWrapper = $('<div class="mjs-input-with-btn"></div>')
-                $inputWrapper.append($input)
-                const $mapBtn = $('<button type="button" class="mjs-map-select-btn" data-input-key="' + escapeHTML(key) + '">Select on Map</button>')
-                $inputWrapper.append($mapBtn)
-                $field.append($inputWrapper)
-            } else {
-                $field.append($input)
-            }
-            inputRefs.push({ key, $input, type: inputType })
-        }
-
-        // Description if provided
-        if (input.description) {
-            $field.append(
-                `<div class="mjs-field-description">${escapeHTML(input.description)}</div>`
-            )
-        }
-
-        $parent.append($field)
-
-        // Track if this is a lat or lon field for button placement
-        if (hasLatLonPair && (key === latKey || key === lonKey)) {
-            lastLatLonField = $field
-        }
-    })
-
-    // Add a single "Select Point on Map" button after the last lat/lon field
-    if (hasLatLonPair && lastLatLonField) {
-        const $pointBtn = $('<button type="button" class="mjs-select-point-btn" data-lat-key="' + escapeHTML(latKey) + '" data-lon-key="' + escapeHTML(lonKey) + '">Select Point on Map</button>')
-        lastLatLonField.after($pointBtn)
-
-        // Add listeners to update the point marker when lat/lon fields change
-        const $latInput = $(`#mjs-input-${latKey.replace(/[^A-Za-z0-9_-]/g, '_')}`)
-        const $lonInput = $(`#mjs-input-${lonKey.replace(/[^A-Za-z0-9_-]/g, '_')}`)
-
-        const updatePointOnMap = () => {
-            const lat = parseFloat($latInput.val())
-            const lon = parseFloat($lonInput.val())
-
-            if (!isNaN(lat) && !isNaN(lon)) {
-                if (Map_ && Map_.map) {
-                    const map = Map_.map
-                    const L = window.L
-
-                    // Remove existing marker if present
-                    const markerKey = 'latlon-pair'
-                    if (MapSelection.persistentLayers[markerKey]) {
-                        try {
-                            map.removeLayer(MapSelection.persistentLayers[markerKey])
-                        } catch (err) {
-                            console.warn('[MapJobSubmitTool] Failed to remove point marker:', err)
-                        }
-                    }
-
-                    // Create new marker
-                    const marker = L.circleMarker([lat, lon], {
-                        radius: 8,
-                        color: '#00A9E0',
-                        fillColor: '#00A9E0',
-                        fillOpacity: 0.6,
-                        weight: 2
-                    }).addTo(map)
-                    marker.bindPopup(`Selected Point<br>Lat: ${lat.toFixed(6)}<br>Lon: ${lon.toFixed(6)}`)
-
-                    // Store the new marker
-                    MapSelection.persistentLayers[markerKey] = marker
-                }
-            }
-        }
-
-        if ($latInput.length && $lonInput.length) {
-            $latInput.on('input', updatePointOnMap)
-            $lonInput.on('input', updatePointOnMap)
-        }
-    }
-
-    return function collectPayload() {
-        const inputs = {}
-        inputRefs.forEach((ref) => {
-            const { key, $input, type, isBbox } = ref
-
-            if (isBbox) {
-                // Collect bbox coordinates - use raw values as-is
-                const minLon = parseFloat(ref.$minLon.val())
-                const minLat = parseFloat(ref.$minLat.val())
-                const maxLon = parseFloat(ref.$maxLon.val())
-                const maxLat = parseFloat(ref.$maxLat.val())
-
-                // Only add if all values are present
-                if (!isNaN(minLon) && !isNaN(minLat) && !isNaN(maxLon) && !isNaN(maxLat)) {
-
-                    // Order: [min_longitude, min_latitude, max_longitude, max_latitude]
-                    // Format based on the input type from the algorithm
-                    if (type === 'array') {
-                        inputs[key] = [minLon, minLat, maxLon, maxLat]
-                    } else {
-                        // String or text format: "min_lon,min_lat,max_lon,max_lat"
-                        inputs[key] = `${minLon},${minLat},${maxLon},${maxLat}`
-                    }
-                }
-            } else if (type === 'boolean') {
-                inputs[key] = $input.is(':checked')
-            } else {
-                const val = $input.val()
-                if (val !== '') {
-                    // Convert to number if it's a numeric input type or lat/lon
-                    if (shouldBeNumeric(key, type)) {
-                        const num = parseFloat(val)
-                        if (!isNaN(num)) {
-                            inputs[key] = num
-                        } else {
-                            inputs[key] = val // Keep as string if conversion fails
-                        }
-                    } else {
-                        inputs[key] = val
-                    }
-                }
-            }
-        })
-        return {
-            queue: ($queueSelect && $queueSelect.val()) || '',
-            tag: ($tagInput && $tagInput.val().trim()) || '',
-            inputs: inputs
-        }
-    }
-}
-
-function buildForm($parent, fields) {
-    $parent.empty()
-    if (!fields || fields.length === 0) {
-        $parent.append('<div class="mjs-empty">No parameters.</div>')
-        return () => ({})
-    }
-    const inputs = []
-    let visibleCount = 0
-    fields.forEach((f) => {
-        // Hidden (explicit, or — TEMPORARY — file:// default): skip the DOM
-        // entirely. The default still gets sent at collect-payload time.
-        if (f.hidden || isFilePathValue(f.default)) {
-            inputs.push({ f, $input: null })
-            return
-        }
-        const id = `mjs-field-${f.name.replace(/[^A-Za-z0-9_-]/g, '_')}`
-        const initial = f.default
-        const initialStr = initial != null ? String(initial) : ''
-        const $field = $('<div class="mjs-field"></div>')
-        const lockedSuffix = f.readOnly
-            ? ' <span class="mjs-field-locked">read-only</span>'
-            : ''
-        $field.append(
-            `<div class="mjs-field-label"><label for="${id}">${escapeHTML(
-                f.name
-            )}</label><span class="mjs-field-type">${escapeHTML(
-                f.type || ''
-            )}${lockedSuffix}</span></div>`
-        )
-        let $input
-        if (f.type === 'boolean') {
-            $input = $('<input type="checkbox" />').attr('id', id)
-            if (initial === true) $input.prop('checked', true)
-        } else if (f.type === 'number' || f.type === 'integer') {
-            $input = $('<input type="number" />')
-                .attr('id', id)
-                .attr('placeholder', initialStr)
-                .val(initialStr)
-            if (f.type === 'integer') $input.attr('step', '1')
-            if (f.min != null) $input.attr('min', f.min)
-            if (f.max != null) $input.attr('max', f.max)
-        } else if (f.type === 'date') {
-            $input = $('<input type="date" />').attr('id', id).val(initialStr)
-        } else {
-            $input = $('<input type="text" />')
-                .attr('id', id)
-                .attr('placeholder', initialStr)
-                .val(initialStr)
-        }
-        if (f.readOnly) {
-            $input.prop('disabled', true).addClass('mjs-input-readonly')
-        }
-        $field.append($input)
-        if (f.description) {
-            $field.append(
-                `<div class="mjs-field-description">${escapeHTML(
-                    f.description
-                )}</div>`
-            )
-        }
-        $parent.append($field)
-        inputs.push({ f, $input })
-        visibleCount++
-    })
-    if (visibleCount === 0) {
-        $parent.append(
-            '<div class="mjs-empty">All parameters hidden; defaults will be sent.</div>'
-        )
-    }
-    return function collectPayload() {
-        const out = {}
-        inputs.forEach(({ f, $input }) => {
-            let v
-            if (f.hidden || f.readOnly || isFilePathValue(f.default)) {
-                // Always emit the configured default — user can't change it
-                // (either intentionally locked, or TEMPORARY file:// hiding).
-                v = f.default
-            } else if (f.type === 'boolean') {
-                v = $input.is(':checked')
-            } else if (f.type === 'number' || f.type === 'integer') {
-                const raw = $input.val()
-                if (raw !== '') v = Number(raw)
-            } else {
-                // Sanitize text inputs to prevent XSS
-                const raw = $input.val()
-                v = sanitizeInput(raw)
-            }
-            if (v !== undefined && v !== '') out[f.name] = v
-        })
-        return out
-    }
-}
-
-// Pull {collection, item} out of a STAC item URL like
-// http://host/stac/collections/<coll>/items/<item>. Returns null if not
-// recognized.
-function parseStacItemUrl(u) {
-    const m = /\/stac\/collections\/([^/?#]+)\/items\/([^/?#]+)/i.exec(u)
-    if (!m) return null
-    return { collection: m[1], item: m[2] }
-}
-
-// Fixed RFC-format uuid — the Configure API's validator (uuidValidate)
-// rejects human-readable ids and would regenerate them, breaking lookups.
-const GROUP_UUID = 'c7a4f1de-2f04-4e6b-9c8d-3b1a2e5f6a70'
-const GROUP_DISPLAY_NAME = 'Workflow Outputs'
-
-// Get (or lazily create + register) the header group all workflow layers
-// live under in the Layers panel. The same object reference is shared
-// between L_.configData.layers and L_.layers.data, mirroring parseConfig.
-function ensureWorkflowsGroup() {
-    if (L_.layers.data[GROUP_UUID]) return L_.layers.data[GROUP_UUID]
-    const header = {
-        // Post-parse convention: name IS the uuid (LayersTool builds DOM ids
-        // from name; display_name carries the label).
-        name: GROUP_UUID,
-        uuid: GROUP_UUID,
-        display_name: GROUP_DISPLAY_NAME,
-        type: 'header',
-        expanded: true,
-        visibility: true,
-        sublayers: [],
-    }
-    L_.layers.data[GROUP_UUID] = header
-    L_.layers.nameToUUID = L_.layers.nameToUUID || {}
-    L_.layers.nameToUUID[GROUP_DISPLAY_NAME] = [GROUP_UUID]
-    L_.layers.on = L_.layers.on || {}
-    L_.layers.on[GROUP_UUID] = true // headers always start on
-    L_.layers.opacity = L_.layers.opacity || {}
-    L_.layers.opacity[GROUP_UUID] = 1
-    L_.layers.dataFlat = L_.layers.dataFlat || []
-    L_.layers.dataFlat.unshift(header)
-    L_.configData.layers = L_.configData.layers || []
-    L_.configData.layers.unshift(header)
-    return header
-}
-
-// Markdown provenance blurb for the Layers panel's Information modal
-// (LayerInfoModal renders layer.description through showdown).
-function buildLayerDescription(jobId, job) {
-    const lines = ['Generated by the Workflows tool.', '']
-    if (job.name) lines.push(`**Run:** ${job.name}`)
-    lines.push(`**Workflow:** \`${jobId}\``)
-    if (job.endpoint) lines.push(`**Endpoint:** \`${job.endpoint}\``)
-    if (job.payload && Object.keys(job.payload).length > 0) {
-        // TEMPORARY: file:// values stripped from display, same as the job
-        // tiles (see comment on ENDPOINTS).
-        const entries = Object.entries(job.payload).filter(
-            ([, v]) => !isFilePathValue(v)
-        )
-        if (entries.length > 0) {
-            lines.push('', '**Parameters:**', '')
-            lines.push('| Parameter | Value |')
-            lines.push('| --- | --- |')
-            entries.forEach(([k, v]) => {
-                lines.push(`| \`${k}\` | \`${v}\` |`)
-            })
-        }
-    }
-    return lines.join('\n')
-}
-
-function buildLayerObjForJob(jobId, uri, job) {
-    const uuid = jobId
-    const base = {
-        // MMGIS keys everything by uuid-as-name; display_name is the label.
-        name: uuid,
-        uuid,
-        display_name: job.name || `Workflow ${jobId}`,
-        description: buildLayerDescription(jobId, job),
-        initialOpacity: 1,
-        visibility: true,
-        controlled: false,
-        variables: {},
-        // parseConfig stamps this on every layer; without it Map_ turns the
-        // missing time into starttime/endtime of '' and the tile middleware
-        // emits a `datetime=/` param that pgstac rejects.
-        time: { enabled: false },
-    }
-    const stac = parseStacItemUrl(uri)
-    if (stac) {
-        // Piggy-back on MMGIS's stac-collection: handling — the workflow's
-        // item lives in a per-user collection; adding the collection surfaces
-        // the new item alongside any siblings via titilerpgstac tiles.
-        return {
-            ...base,
-            type: 'tile',
-            url: `stac-collection:${stac.collection}`,
-            tileformat: 'wmts',
-            minZoom: 0,
-            // The config validator requires all three zoom fields on tile
-            // layers (no defaults are filled for them).
-            maxNativeZoom: 20,
-            maxZoom: 20,
-            style: {},
-        }
-    }
-    // Vector: GeoJSON/GPKG/KML or WFS GetFeature returning JSON.
-    return {
-        ...base,
-        type: 'vector',
-        url: uri,
-        style: {
-            color: '#ff8800',
-            fillColor: '#ff8800',
-            fillOpacity: 0.5,
-            weight: 2,
-            radius: 6,
-        },
-    }
-}
-
-// Persist the layer into the mission's stored configuration via the
-// Configure API so it survives reloads and reaches other users of the
-// mission. Two-step, self-healing: first try placing the child inside the
-// existing "Workflow Outputs" group; if the group doesn't exist in the
-// stored config yet, create it (with the layer inside) at the top.
-// Requires the MMGIS user to have mission-edit permission — failure is
-// non-fatal (the layer stays for this session either way).
-async function persistLayerToMission(layerObj) {
-    const mission = L_.mission
-    if (!mission) return false
-    const post = (body) =>
-        mmgisFetch('api/configure/addLayer', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(body),
-        })
-            .then((r) => r.json())
-            .catch(() => ({ status: 'failure', message: 'network error' }))
-
-    let r = await post({
-        mission,
-        layer: layerObj,
-        placement: { path: GROUP_DISPLAY_NAME, index: 0 },
-    })
-    if (r.status === 'success') return true
-    if (!/not found/i.test(String(r.message || ''))) {
-        console.warn('[MapJobSubmitTool] persist failed:', r.message, r.errors || r.badUUIDs || '')
-        return false
-    }
-    r = await post({
-        mission,
-        layer: {
-            name: GROUP_DISPLAY_NAME,
-            uuid: GROUP_UUID,
-            type: 'header',
-            expanded: true,
-            visibility: true,
-            sublayers: [layerObj],
-        },
-        placement: { index: 0 },
-    })
-    if (r.status === 'success') return true
-    console.warn('[MapJobSubmitTool] persist failed:', r.message, r.errors || r.badUUIDs || '')
-    return false
-}
-
-// Remove a run's layer everywhere: off the map, out of the L_ registries and
-// the "Workflow Outputs" group, and (best-effort) out of the stored mission
-// configuration.
-async function removeLayerForJob(jobId, job) {
-    const layerObj = L_.layers.data[jobId]
-    if (layerObj) {
-        try {
-            // Detach from the map first if currently visible.
-            if (L_.layers.on[jobId] === true) {
-                await L_.toggleLayer(layerObj, true)
-            }
-        } catch (err) {
-            console.warn('[MapJobSubmitTool] layer detach failed', err)
-        }
-        delete L_.layers.layer[jobId]
-        delete L_.layers.data[jobId]
-        delete L_.layers.on[jobId]
-        delete L_.layers.opacity[jobId]
-        if (L_.layers.attachments) delete L_.layers.attachments[jobId]
-        if (L_._layersParent) delete L_._layersParent[jobId]
-        const oi = (L_._layersOrdered || []).indexOf(jobId)
-        if (oi !== -1) L_._layersOrdered.splice(oi, 1)
-        const fi = (L_.layers.dataFlat || []).findIndex(
-            (l) => l && l.uuid === jobId
-        )
-        if (fi !== -1) L_.layers.dataFlat.splice(fi, 1)
-        const dn = layerObj.display_name
-        if (dn && L_.layers.nameToUUID && L_.layers.nameToUUID[dn]) {
-            const ni = L_.layers.nameToUUID[dn].indexOf(jobId)
-            if (ni !== -1) L_.layers.nameToUUID[dn].splice(ni, 1)
-            if (L_.layers.nameToUUID[dn].length === 0)
-                delete L_.layers.nameToUUID[dn]
-        }
-        // The group header object is shared with configData, so splicing its
-        // sublayers updates the config tree too.
-        const group = L_.layers.data[GROUP_UUID]
-        if (group && Array.isArray(group.sublayers)) {
-            const si = group.sublayers.findIndex(
-                (l) => l && l.uuid === jobId
-            )
-            if (si !== -1) group.sublayers.splice(si, 1)
-        }
-        const layersTool = ToolController_.getTool
-            ? ToolController_.getTool('LayersTool')
-            : null
-        if (
-            ToolController_.activeToolName === 'LayersTool' &&
-            layersTool &&
-            layersTool.destroy &&
-            layersTool.make
-        ) {
-            layersTool.destroy()
-            layersTool.make()
-        }
-    }
-    job.layerAdded = false
-    job.persisted = undefined
-    Workflows.renderJobs()
-    // Best-effort removal from the stored mission config; "not found" just
-    // means it was session-only.
-    mmgisFetch('api/configure/removeLayer', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mission: L_.mission, layerUUID: jobId }),
-    })
-        .then((r) => r.json())
-        .then((r) => {
-            if (
-                r.status !== 'success' &&
-                !/not found|unable/i.test(String(r.message || ''))
-            )
-                console.warn(
-                    '[MapJobSubmitTool] layer config removal:',
-                    r.message
-                )
-        })
-        .catch(() => {})
-}
-
-// Keep an added layer's label (and provenance description) in sync when the
-// user renames the run — in-memory, in the Layers panel, and in the stored
-// mission config when the layer was persisted there.
-function syncLayerName(jobId) {
-    const uuid = jobId
-    const layerObj = L_.layers.data[uuid]
-    if (!layerObj) return
-    const job = Workflows.jobs[jobId] || {}
-    layerObj.display_name = job.name || `Workflow ${jobId}`
-    layerObj.description = buildLayerDescription(jobId, job)
-    // dataFlat/configData hold the same object reference, so the Layers
-    // panel picks the new label up on its next build; rebuild now if showing.
-    const layersTool = ToolController_.getTool
-        ? ToolController_.getTool('LayersTool')
-        : null
-    if (
-        ToolController_.activeToolName === 'LayersTool' &&
-        layersTool &&
-        layersTool.destroy &&
-        layersTool.make
-    ) {
-        layersTool.destroy()
-        layersTool.make()
-    }
-    // Best-effort config sync — a "not found" just means the layer was never
-    // persisted (session-only), which is fine.
-    mmgisFetch('api/configure/updateLayer', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            mission: L_.mission,
-            layerUUID: uuid,
-            layer: {
-                display_name: layerObj.display_name,
-                description: layerObj.description,
-            },
-        }),
-    })
-        .then((r) => r.json())
-        .then((r) => {
-            if (
-                r.status !== 'success' &&
-                !/not found/i.test(String(r.message || ''))
-            )
-                console.warn('[MapJobSubmitTool] layer rename sync:', r.message)
-        })
-        .catch(() => {})
-}
-
-function addLayerForJob(jobId, job) {
-    const uri = job.autoAddableUri
-    if (!uri) return
-    const uuid = jobId
-    const layerObj = buildLayerObjForJob(jobId, uri, job)
-    // Skip mmgisAPI.addLayer (it forgets to re-parse the config) and skip the
-    // resetConfig path (re-runs parseConfig over every existing mission layer,
-    // surfacing unrelated latent bugs in those layers). Splice the new layer
-    // directly into the already-parsed L_ registries — nested under the
-    // shared "Workflows" header group — and ask the map to render only it.
-    ;(async () => {
-        try {
-            if (L_.layers.data[uuid]) {
-                // Already present; nothing to do.
-                job.layerAdded = true
-                Workflows.renderJobs()
-                return
-            }
-            const group = ensureWorkflowsGroup()
-            group.sublayers.unshift(layerObj)
-            L_.layers.data[uuid] = layerObj
-            L_.layers.nameToUUID = L_.layers.nameToUUID || {}
-            L_.layers.nameToUUID[layerObj.display_name] =
-                L_.layers.nameToUUID[layerObj.display_name] || []
-            L_.layers.nameToUUID[layerObj.display_name].push(uuid)
-            L_._layersOrdered = L_._layersOrdered || []
-            L_._layersOrdered.unshift(uuid)
-            L_.layers.dataFlat = L_.layers.dataFlat || []
-            L_.layers.dataFlat.unshift(layerObj)
-            L_.layers.on = L_.layers.on || {}
-            L_.layers.on[uuid] = true
-            L_.layers.opacity = L_.layers.opacity || {}
-            L_.layers.opacity[uuid] = 1
-            L_._layersParent = L_._layersParent || {}
-            L_._layersParent[uuid] = GROUP_UUID
-            await L_.Map_.makeLayer(layerObj, true)
-            // makeLayer only constructs the Leaflet layer; addVisible is
-            // what actually attaches it to the map (same two-step
-            // addLayerToLayersData performs).
-            L_.addVisible(L_.Map_, [uuid])
-            // Refresh the Layers panel if it happens to be showing.
-            const layersTool = ToolController_.getTool
-                ? ToolController_.getTool('LayersTool')
-                : null
-            if (
-                ToolController_.activeToolName === 'LayersTool' &&
-                layersTool &&
-                layersTool.destroy &&
-                layersTool.make
-            ) {
-                layersTool.destroy()
-                layersTool.make()
-            }
-            job.layerAdded = true
-            job.persisted = 'pending'
-            Workflows.renderJobs()
-            persistLayerToMission(layerObj).then((ok) => {
-                job.persisted = ok
-                Workflows.renderJobs()
-            })
-        } catch (err) {
-            console.warn('[MapJobSubmitTool] addLayer failed', err)
-        }
-    })()
-}
-
 // ---- HTTP helpers ----
-
-// Poll a specific job's status through the MMGIS proxy
-// getJobDetails: optional boolean to request full job details (for import)
-function pollJob(jobId, getJobDetails) {
-    let proxyUrl = `api/mapjobsubmit/jobs/${encodeURIComponent(jobId)}?baseUrl=` + encodeURIComponent(Workflows.baseUrl)
-
-    // Add getJobDetails parameter if requested
-    if (getJobDetails) {
-        proxyUrl += `&getJobDetails=true`
-    }
-
-    return mmgisFetch(proxyUrl)
-        .then((r) => {
-            if (!r.ok) {
-                // Return the status so we can handle 404 vs other errors
-                return r.json().catch(() => ({ error: true, status: r.status, statusText: r.statusText }))
-            }
-            return r.json()
-        })
-        .then((data) => {
-            // Check if this is an error response
-            if (data && data.error && data.status) {
-                throw new Error(`HTTP ${data.status}: ${data.statusText || 'Job not found'}`)
-            }
-            return data || {}
-        })
-        .catch((err) => {
-            // For normal polling, log and return empty
-            // For import, the caller will handle the error
-            console.warn('[MapJobSubmitTool] pollJob failed for', jobId, err)
-            throw err
-        })
-}
+// See api.js for mmgisFetch / mmgisUrl / verifyToken / fetchMaapUserId /
+// fetchProcesses / fetchProcessDetails / fetchResources / pollJob and the
+// job-history DB functions (fetchSubmittedRegistry, recordSubmittedJob,
+// updateJobName, deleteJobFromDatabase). See layerManager.js for the
+// "Workflow Outputs" layer group helpers (ensureWorkflowsGroup,
+// buildLayerDescription, buildLayerObjForJob, persistLayerToMission,
+// removeLayerForJob, syncLayerName, addLayerForJob).
 
 // ---- Map Input Display State ----
 const MapInputDisplay = {
@@ -3126,7 +1956,15 @@ function interfaceWithMMGIS() {
 
             // Build form from the inputs object
             if (details.inputs && typeof details.inputs === 'object') {
-                collectPayload = buildFormFromInputs($form, details.inputs, $queueSelect, $tagInput)
+                collectPayload = UI.buildFormFromInputs(
+                    $form,
+                    details.inputs,
+                    $queueSelect,
+                    $tagInput,
+                    Map_,
+                    shouldShowMapSelect,
+                    MapSelection
+                )
             } else {
                 $form.empty().append('<div class="mjs-empty">No parameters required.</div>')
                 collectPayload = () => ({
