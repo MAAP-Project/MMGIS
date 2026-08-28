@@ -426,9 +426,18 @@ const MapInputDisplay = {
         if (layers.length > 0) {
             this.layers[jobId] = layers
 
-            // Zoom to fit all layers
+            // Zoom to fit all layers. A single point (no bbox) produces a
+            // zero-size bounds, cap the zoom
+            // so we don't overshoot past available data.
             const group = L.featureGroup(layers)
-            map.fitBounds(group.getBounds(), { padding: [50, 50] })
+            const maxSensibleZoom = Math.min(
+                map.getZoom() + 6,
+                map.getMaxZoom ? map.getMaxZoom() : 18
+            )
+            map.fitBounds(group.getBounds(), {
+                padding: [50, 50],
+                maxZoom: maxSensibleZoom
+            })
         } else {
             window.alert('No valid map inputs found in this job.')
         }
