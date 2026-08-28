@@ -330,6 +330,9 @@ const MapInputDisplay = {
         // Check if payload has an 'inputs' wrapper (new format with queue/tag/inputs)
         const inputsToUse = payload.inputs || payload
 
+        // Label used in popups: prefer the job's tag, fall back to its id.
+        const jobLabel = (payload.tag && String(payload.tag).trim()) || jobId
+
         // Collect all map inputs from payload
         const points = [] // Array of {lat, lon, label}
         const bboxes = [] // Array of {bbox, label}
@@ -377,7 +380,7 @@ const MapInputDisplay = {
                     fillOpacity: 0.6,
                     weight: 2
                 }).addTo(map)
-                marker.bindPopup(`Job Input: ${escapeHTML(point.label)}<br>Lat: ${point.lat.toFixed(6)}<br>Lon: ${point.lon.toFixed(6)}`)
+                marker.bindPopup(`Job: ${escapeHTML(jobLabel)}<br>Input: ${escapeHTML(point.label)}<br>Lat: ${point.lat.toFixed(6)}<br>Lon: ${point.lon.toFixed(6)}`)
                 layers.push(marker)
             } catch (err) {
                 console.error('[MapJobSubmitTool] Failed to add point marker:', err)
@@ -410,8 +413,8 @@ const MapInputDisplay = {
                     // Check if this is a dateline-crossing bbox (west > east)
                     const crossesDateline = west > east
                     const popupText = crossesDateline
-                        ? `Job Input: ${escapeHTML(bboxObj.label)} (crosses dateline)<br>Bounding Box:<br>W: ${west}, S: ${south}<br>E: ${east}, N: ${north}<br><small>Spans ${(360 - (west - east)).toFixed(1)}° longitude</small>`
-                        : `Job Input: ${escapeHTML(bboxObj.label)}<br>Bounding Box:<br>W: ${west}, S: ${south}<br>E: ${east}, N: ${north}`
+                        ? `Job: ${escapeHTML(jobLabel)}<br>Input: ${escapeHTML(bboxObj.label)} (crosses dateline)<br>Bounding Box:<br>W: ${west}, S: ${south}<br>E: ${east}, N: ${north}<br><small>Spans ${(360 - (west - east)).toFixed(1)}° longitude</small>`
+                        : `Job: ${escapeHTML(jobLabel)}<br>Input: ${escapeHTML(bboxObj.label)}<br>Bounding Box:<br>W: ${west}, S: ${south}<br>E: ${east}, N: ${north}`
                     rect.bindPopup(popupText)
 
                     layers.push(rect)
