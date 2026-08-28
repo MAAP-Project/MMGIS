@@ -245,55 +245,6 @@ export async function removeLayerForJob(jobId, job, L_, ToolController_, renderJ
 }
 
 /**
- * Syncs layer name and description when user renames a job
- * Updates in-memory, Layers panel, and stored mission config
- */
-export function syncLayerName(jobId, job, L_, ToolController_) {
-    const uuid = jobId
-    const layerObj = L_.layers.data[uuid]
-    if (!layerObj) return
-    layerObj.display_name = job.name || `Workflow ${jobId}`
-    layerObj.description = buildLayerDescription(jobId, job)
-    // dataFlat/configData hold the same object reference, so the Layers
-    // panel picks the new label up on its next build; rebuild now if showing.
-    const layersTool = ToolController_.getTool
-        ? ToolController_.getTool('LayersTool')
-        : null
-    if (
-        ToolController_.activeToolName === 'LayersTool' &&
-        layersTool &&
-        layersTool.destroy &&
-        layersTool.make
-    ) {
-        layersTool.destroy()
-        layersTool.make()
-    }
-    // Best-effort config sync — a "not found" just means the layer was never
-    // persisted (session-only), which is fine.
-    API.mmgisFetch('api/configure/updateLayer', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            mission: L_.mission,
-            layerUUID: uuid,
-            layer: {
-                display_name: layerObj.display_name,
-                description: layerObj.description,
-            },
-        }),
-    })
-        .then((r) => r.json())
-        .then((r) => {
-            if (
-                r.status !== 'success' &&
-                !/not found/i.test(String(r.message || ''))
-            )
-                console.warn('[MapJobSubmitTool] layer rename sync:', r.message)
-        })
-        .catch(() => {})
-}
-
-/**
  * Adds a layer to the map for a job's output
  * Creates layer, adds to group, renders on map, and persists to config
  */

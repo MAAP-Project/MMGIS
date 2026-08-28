@@ -176,25 +176,3 @@ export function formatLocale(iso) {
     if (isNaN(d.getTime())) return String(iso)
     return d.toLocaleString()
 }
-
-// Compact value renderer for the always-visible params summary.
-export function formatParamValue(v) {
-    if (v == null) return ''
-    if (typeof v === 'string') {
-        if (/^[a-z]+:\/\//i.test(v)) {
-            const i = v.lastIndexOf('/')
-            if (i > 0 && i < v.length - 1) return '…/' + v.slice(i + 1)
-        }
-        if (v.length > 60) return v.slice(0, 12) + '…' + v.slice(-30)
-        return v
-    }
-    if (typeof v === 'object') {
-        // Format objects as JSON for better readability
-        try {
-            return JSON.stringify(v)
-        } catch (e) {
-            return '[object]'
-        }
-    }
-    return String(v)
-}

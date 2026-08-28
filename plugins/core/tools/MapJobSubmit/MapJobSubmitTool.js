@@ -117,14 +117,6 @@ function addLayerForJob(jobId, job) {
         Workflows.renderJobs
     )
 }
-function syncLayerName(jobId) {
-    return LayerManager.syncLayerName(
-        jobId,
-        Workflows.jobs[jobId] || {},
-        L_,
-        ToolController_
-    )
-}
 
 // Algorithms fetched from the workflows API (baseUrl + '/processes')
 // Shape: { processes: [{ id, title, description, version, deployedBy, processID, ... }] }
@@ -151,13 +143,12 @@ function endpointLabel(endpoint) {
 }
 
 // Pull a status from the API response. Handles multiple formats:
-// - MAAP API: { status: "failed" }
-// - Legacy formats: { workflow_status: "...", job_status: "..." }
+// - OGC API standard: { status: "failed" }
 // Always returned lowercase to keep CSS classes consistent.
 function readStatus(body) {
     if (!body) return ''
     return Utils.normalizeStatus(
-        body.status || body.workflow_status || body.job_status || ''
+        body.status || ''
     )
 }
 
@@ -302,7 +293,7 @@ function getMapSelectType(key) {
 // updateJobName, deleteJobFromDatabase). See layerManager.js for the
 // "Workflow Outputs" layer group helpers (ensureWorkflowsGroup,
 // buildLayerDescription, buildLayerObjForJob, persistLayerToMission,
-// removeLayerForJob, syncLayerName, addLayerForJob).
+// removeLayerForJob, addLayerForJob).
 
 // ---- Map Input Display State ----
 const MapInputDisplay = {
@@ -474,7 +465,7 @@ const MapSelection = {
     clickHandler: null,
     persistentLayers: {}, // Map of inputKey -> layer, so each button has only one feature
 
-    startPoint: function(latKey, lonKey, $latInput, $lonInput) {
+    startPoint: function($latInput, $lonInput) {
         this.cancel() // Cancel any existing selection
         this.active = true
         this.type = 'point'
@@ -1257,30 +1248,6 @@ function mergeJobUpdate(id, body) {
     // "add as layer" button instead — the user decides what lands on the map.
 }
 
-// Compact value renderer for the always-visible params summary. For URI-like
-// strings, show just the leaf (filename) — the path prefix is rarely useful
-// at a glance and full value is available in the title tooltip + expand.
-function formatParamValue(v) {
-    if (v == null) return ''
-    if (typeof v === 'string') {
-        if (/^[a-z]+:\/\//i.test(v)) {
-            const i = v.lastIndexOf('/')
-            if (i > 0 && i < v.length - 1) return '…/' + v.slice(i + 1)
-        }
-        if (v.length > 60) return v.slice(0, 12) + '…' + v.slice(-30)
-        return v
-    }
-    if (typeof v === 'object') {
-        // Format objects as JSON for better readability
-        try {
-            return JSON.stringify(v)
-        } catch (e) {
-            return '[object]'
-        }
-    }
-    return String(v)
-}
-
 // Parse an ISO-ish timestamp (the API returns naive UTC like "2026-06-02T23:20:50.586000")
 // and render in the user's locale. Falls back to the raw string on bad input.
 function formatLocale(iso) {
@@ -1843,7 +1810,7 @@ function interfaceWithMMGIS() {
         if (!$latInput.length || !$lonInput.length) return
 
         // Start point selection with both inputs
-        MapSelection.startPoint(latKey, lonKey, $latInput, $lonInput)
+        MapSelection.startPoint($latInput, $lonInput)
 
         // Update button text to indicate active selection
         $(this).text('Click map to select point').addClass('mjs-map-select-active')
@@ -2064,12 +2031,6 @@ function interfaceWithMMGIS() {
             $select.empty().append('<option value="">Failed to load queues</option>')
             $select.attr('disabled', false)
         })
-    }
-
-    function enableSubmit() {
-        // Populate the algorithm dropdown now that we have PROCESSES
-        populateAlgorithmDropdown()
-        $submit.text('Submit Job').attr('disabled', false)
     }
 
     function renderUnauthenticated() {
