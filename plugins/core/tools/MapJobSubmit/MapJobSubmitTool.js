@@ -1359,72 +1359,20 @@ function buildExpandedSection(job, jobId) {
         )
     }
 
-    // Raw output URIs are intentionally NOT listed (s3/internal paths are
-    // noise to end users) — just the layer controls for the loadable output.
-    {
-        const statusClass = normalizeStatus(job.status)
-        const visible = L_.layers.on[jobId] === true
-
-        if (statusClass === 'completed' && job.autoAddableUri) {
-            // A layer counts as added if we added it this session OR it was
-            // persisted to the mission config earlier and came in via the
-            // normal config parse on load.
-            const added =
-                job.layerAdded ||
-                L_.layers.data[jobId] != null
-            // Two explicit controls: "Add layer" (one-time) and a visibility
-            // toggle that's only live once the layer exists on the map.
-            const $row = $('<div class="mjs-map-btn-row"></div>')
-            $row.append(
-                `<button type="button" class="mjs-map-btn mjs-layer-add" data-job-id="${escapeHTML(
-                    jobId
-                )}"${added ? ' disabled' : ''}>${
-                    added ? 'Layer added' : 'Add layer'
-                }</button>`
-            )
-            // Visibility control styled like the Layers panel's filled
-            // checkbox. The mjs-layer-toggle handler no-ops until the layer
-            // actually exists on the map.
-            $row.append(
-                `<div class="mjs-layer-visibility mjs-layer-toggle${
-                    added ? '' : ' disabled'
-                }" data-job-id="${escapeHTML(jobId)}" title="${
-                    added
-                        ? 'Toggle layer visibility'
-                        : 'Add the layer first'
-                }">` +
-                    `<div class="mjs-checkbox${
-                        added && visible ? ' on' : ''
-                    }"></div>` +
-                    `<span>Visible</span>` +
-                    `</div>`
-            )
-            $exp.append($row)
-            if (added) {
-                $exp.append(
-                    `<button type="button" class="mjs-map-btn mjs-layer-remove" data-job-id="${escapeHTML(
-                        jobId
-                    )}">Remove layer</button>`
-                )
-            }
-            if (job.persisted === 'pending') {
-                $exp.append(
-                    '<div class="mjs-exp-hint">Saving to mission configuration…</div>'
-                )
-            } else if (job.persisted === true) {
-                $exp.append(
-                    '<div class="mjs-exp-hint">Saved to mission configuration — persists across reloads.</div>'
-                )
-            } else if (job.persisted === false) {
-                $exp.append(
-                    '<div class="mjs-exp-hint">Added for this session only — could not save to the mission configuration (this needs mission-edit permission).</div>'
-                )
-            } else if (added && !job.layerAdded) {
-                $exp.append(
-                    '<div class="mjs-exp-hint">Layer is saved in the mission configuration.</div>'
-                )
-            }
-        }
+    // Output data controls
+    if (normalizeStatus(job.status) === 'completed') {
+        const $row = $('<div class="mjs-map-btn-row"></div>')
+        $row.append(
+            `<button type="button" class="mjs-map-btn mjs-view-data-btn" data-job-id="${escapeHTML(
+                jobId
+            )}" disabled>View Data on Map</button>`
+        )
+        $row.append(
+            `<button type="button" class="mjs-map-btn mjs-download-data-btn" data-job-id="${escapeHTML(
+                jobId
+            )}" disabled>Download Data</button>`
+        )
+        $exp.append($row)
     }
 
     // Server-side metadata, when present.
@@ -1707,48 +1655,6 @@ function interfaceWithMMGIS() {
         Workflows.renderJobs()
     })
 
-    // Add a completed job's STAC/vector output as a map layer. Delegated.
-    $root.find('.mjs-jobs-list').on('click', '.mjs-layer-add', function (e) {
-        e.preventDefault()
-        e.stopPropagation()
-        const id = $(this).attr('data-job-id')
-        if (!id) return
-        const job = Workflows.jobs[id]
-        if (!job || !job.autoAddableUri || job.layerAdded) return
-        $(this).text('Adding…').attr('disabled', true)
-        addLayerForJob(id, job)
-    })
-
-    // Remove a run's layer (map + registries + stored config). Delegated.
-    $root.find('.mjs-jobs-list').on('click', '.mjs-layer-remove', function (e) {
-        e.preventDefault()
-        e.stopPropagation()
-        const id = $(this).attr('data-job-id')
-        if (!id) return
-        const job = Workflows.jobs[id]
-        if (!job) return
-        if (
-            !window.confirm(
-                'Remove this layer from the map and the mission configuration?'
-            )
-        )
-            return
-        removeLayerForJob(id, job)
-    })
-
-    // Toggle layer visibility for a completed job's output. Delegated.
-    $root.find('.mjs-jobs-list').on('click', '.mjs-layer-toggle', function (e) {
-        e.preventDefault()
-        e.stopPropagation()
-        const id = $(this).attr('data-job-id')
-        if (!id) return
-        const layerObj = L_.layers.data[id]
-        if (!layerObj) return
-        Promise.resolve(L_.toggleLayer(layerObj)).then(() =>
-            Workflows.renderJobs()
-        )
-    })
-
     // View job inputs on map (lat/lon/bbox). Delegated.
     $root.find('.mjs-jobs-list').on('click', '.mjs-view-inputs-btn', function (e) {
         e.preventDefault()
@@ -1811,6 +1717,20 @@ function interfaceWithMMGIS() {
                 window.alert(`Failed to remove job: ${err.message}`)
                 $btn.attr('disabled', false).text('Remove Job')
             })
+    })
+
+    // View data on map button. Delegated.
+    $root.find('.mjs-jobs-list').on('click', '.mjs-view-data-btn', function (e) {
+        e.preventDefault()
+        e.stopPropagation()
+        // TODO implement
+    })
+
+    // Download data button. Delegated.
+    $root.find('.mjs-jobs-list').on('click', '.mjs-download-data-btn', function (e) {
+        e.preventDefault()
+        e.stopPropagation()
+        // TODO implement
     })
 
     // Handle "Select Point on Map" button for lat/lon pairs. Delegated.
