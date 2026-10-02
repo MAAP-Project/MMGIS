@@ -1360,7 +1360,7 @@ function buildExpandedSection(job, jobId) {
     }
 
     // Output data controls
-    if (normalizeStatus(job.status) === 'completed') {
+    if (normalizeStatus(job.status) === 'successful') {
         const $row = $('<div class="mjs-map-btn-row"></div>')
         $row.append(
             `<button type="button" class="mjs-map-btn mjs-view-data-btn" data-job-id="${escapeHTML(
