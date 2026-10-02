@@ -17,20 +17,17 @@ import * as UI from './ui.js'
 
 const VECTOR_EXTS = ['geojson', 'json', 'gpkg', 'kml']
 const DEFAULT_POLL_INTERVAL_MS = 30000
-const SUBMITTED_STORAGE_KEY = 'mmgis.workflows.submitted'
-const SUBMITTED_MAX_ENTRIES = 100
 const PAGE_SIZE = 10
 
 // Local aliases to the extracted helper modules — kept so the bulk of this
 // file (written before the utils.js/api.js/layerManager.js split) doesn't
 // need every call site rewritten. Definitions live in the imported modules;
 // no logic is duplicated here.
-const { LAT_VARIATIONS, LON_VARIATIONS, BBOX_VARIATIONS, TERMINAL_STATUSES } =
+const { LAT_VARIATIONS, LON_VARIATIONS } =
     Utils
 const normalizeInputKey = Utils.normalizeInputKey
 const containsBboxVariation = Utils.containsBboxVariation
 const containsLatLonCombo = Utils.containsLatLonCombo
-const shouldBeNumeric = Utils.shouldBeNumeric
 const escapeHTML = Utils.escapeHTML
 const sanitizeInput = Utils.sanitizeInput
 const sanitizeToken = Utils.sanitizeToken
@@ -39,7 +36,6 @@ const isTerminal = Utils.isTerminal
 const isFilePathValue = Utils.isFilePathValue
 const isStacItemUrl = Utils.isStacItemUrl
 const urlsFromString = Utils.urlsFromString
-const parseStacItemUrl = Utils.parseStacItemUrl
 
 function mmgisFetch(path, init) {
     return API.mmgisFetch(path, init, Workflows.personalAccessToken)
@@ -93,23 +89,8 @@ function deleteJobFromDatabase(jobId) {
     return API.deleteJobFromDatabase(jobId, Workflows.personalAccessToken)
 }
 
-function ensureWorkflowsGroup() {
-    return LayerManager.ensureWorkflowsGroup(L_)
-}
-function buildLayerObjForJob(jobId, uri, job) {
-    return LayerManager.buildLayerObjForJob(jobId, uri, job)
-}
 function removeLayerForJob(jobId, job) {
     return LayerManager.removeLayerForJob(
-        jobId,
-        job,
-        L_,
-        ToolController_,
-        Workflows.renderJobs
-    )
-}
-function addLayerForJob(jobId, job) {
-    return LayerManager.addLayerForJob(
         jobId,
         job,
         L_,
@@ -290,7 +271,7 @@ function getMapSelectType(key) {
 // See api.js for mmgisFetch / mmgisUrl / verifyToken / fetchMaapUserId /
 // fetchProcesses / fetchProcessDetails / fetchResources / pollJob and the
 // job-history DB functions (fetchSubmittedRegistry, recordSubmittedJob,
-// updateJobName, deleteJobFromDatabase). See layerManager.js for the
+// deleteJobFromDatabase). See layerManager.js for the
 // "Workflow Outputs" layer group helpers (ensureWorkflowsGroup,
 // buildLayerDescription, buildLayerObjForJob, persistLayerToMission,
 // removeLayerForJob, addLayerForJob).

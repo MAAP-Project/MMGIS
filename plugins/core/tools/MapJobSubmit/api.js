@@ -246,14 +246,6 @@ export function recordSubmittedJob(jobId, endpoint, payload, name, maapUserId, p
         })
 }
 
-export function updateJobName(jobId, name, personalAccessToken) {
-    return mmgisFetch('api/mapjobsubmit-history', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ workflow_id: jobId, name: name || '' }),
-    }, personalAccessToken).catch(() => {})
-}
-
 export function deleteJobFromDatabase(jobId, personalAccessToken) {
     return mmgisFetch(`api/mapjobsubmit-history/${encodeURIComponent(jobId)}`, {
         method: 'DELETE',
